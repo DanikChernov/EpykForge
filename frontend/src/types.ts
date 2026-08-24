@@ -1,0 +1,225 @@
+export type MachineState =
+  | "CONNECTED"
+  | "DISCONNECTED"
+  | "IDLE"
+  | "SETUP"
+  | "RUNNING"
+  | "FEED_HOLD"
+  | "ALARM"
+  | "MAINTENANCE"
+  | "RECOVERY";
+
+export type Severity = "info" | "low" | "medium" | "high" | "critical";
+
+export interface TelemetrySample {
+  timestamp: string;
+  spindle_load_pct: number;
+  x_axis_load_pct: number;
+  y_axis_load_pct: number;
+  z_axis_load_pct: number;
+  observed_cycle_time_sec: number;
+  target_cycle_time_sec: number;
+  tool_life_remaining_pct: number;
+}
+
+export interface Machine {
+  machine_id: string;
+  cell: string;
+  model: string;
+  machine_type: string;
+  capabilities: string[];
+  state: MachineState;
+  current_work_order_id?: string | null;
+  current_operation?: string | null;
+  active_alarm_codes: string[];
+  telemetry: TelemetrySample;
+  telemetry_history: TelemetrySample[];
+  health_score: number;
+  at_risk: boolean;
+  operator: string;
+}
+
+export interface Facility {
+  facility_name: string;
+  synthetic: boolean;
+  health_score: number;
+  machines_total: number;
+  machines_running: number;
+  machines_idle: number;
+  machines_alarmed: number;
+  machines_maintenance: number;
+  active_incidents: number;
+  at_risk_orders: number;
+  agent_fleet_status: string;
+  model_provider: string;
+}
+
+export interface AgentRun {
+  run_id: string;
+  agent_id: string;
+  incident_id?: string | null;
+  status: string;
+  started_at: string;
+  completed_at?: string | null;
+  output_summary?: string | null;
+  error?: string | null;
+  retry_count: number;
+  duration_ms?: number | null;
+}
+
+export interface AgentManifest {
+  agent_id: string;
+  name: string;
+  version: string;
+  owner: string;
+  role: string;
+  purpose: string;
+  status: string;
+  deployment: string;
+  runtime: string;
+  model: string;
+  identity: string;
+  allowed_tools: string[];
+  denied_tools: string[];
+  policy_scope: string[];
+  instructions_summary: string;
+  latest_status?: string;
+  successful_executions?: number;
+  failures?: number;
+  latency_ms?: number | null;
+  health?: string;
+  current_task?: string | null;
+  last_execution?: string | null;
+}
+
+export interface KnowledgeReference {
+  document_id: string;
+  title: string;
+  document_type: string;
+  revision: string;
+  approved: boolean;
+  excerpt: string;
+  relevance_confidence: number;
+  injection_risk: boolean;
+}
+
+export interface Incident {
+  incident_id: string;
+  title: string;
+  severity: Severity;
+  status: string;
+  machine_id: string;
+  work_order_id?: string | null;
+  correlation_id: string;
+  created_at: string;
+  updated_at: string;
+  evidence: Array<{ title: string; summary: string; kind: string; confidence: number; event_id?: string | null }>;
+  diagnosis?: {
+    summary: string;
+    confidence: number;
+    probable_causes: Array<{ cause: string; confidence: number; evidence: string[]; contradictions: string[] }>;
+    recommended_checks: string[];
+    unsafe_to_auto_execute: string[];
+  } | null;
+  knowledge_result?: {
+    references: KnowledgeReference[];
+    security_events: string[];
+    summary: string;
+  } | null;
+  production_impact?: {
+    remaining_quantity: number;
+    estimated_downtime_minutes: number;
+    delivery_risk: string;
+    recommendation: string;
+    saved_minutes_if_reassigned: number;
+    alternatives: Array<{
+      machine_id: string;
+      capable: boolean;
+      current_state: MachineState;
+      setup_minutes: number;
+      cycle_time_sec: number;
+      queue_minutes: number;
+      risk_notes: string[];
+    }>;
+  } | null;
+  recovery_plan?: {
+    summary: string;
+    steps: string[];
+    verification_plan: string[];
+    physical_safety_boundary: string;
+    proposals: Array<{ action_type: string; title: string; approval_required: boolean; risk: string }>;
+  } | null;
+  supervisor_decision?: {
+    effect: string;
+    approved_auto_actions: string[];
+    approval_required_actions: string[];
+    denied_actions: string[];
+    rationale: string;
+  } | null;
+  approvals?: Approval[];
+  action_log?: ActionExecution[];
+  agent_runs?: AgentRun[];
+  trace_spans?: TraceSpan[];
+}
+
+export interface Approval {
+  approval_id: string;
+  incident_id: string;
+  proposal_id: string;
+  action_type: string;
+  status: string;
+  requested_at: string;
+  decided_at?: string | null;
+}
+
+export interface ActionExecution {
+  execution_id: string;
+  action_type: string;
+  principal: string;
+  status: string;
+  incident_id?: string | null;
+  summary: string;
+  timestamp: string;
+}
+
+export interface SecurityEvent {
+  security_event_id: string;
+  timestamp: string;
+  severity: Severity;
+  category: string;
+  title: string;
+  description: string;
+  principal?: string | null;
+  denied_tool?: string | null;
+  trace_id?: string | null;
+  incident_id?: string | null;
+}
+
+export interface TraceSpan {
+  span_id: string;
+  trace_id: string;
+  correlation_id: string;
+  name: string;
+  agent_id?: string | null;
+  status: string;
+  duration_ms?: number | null;
+  attributes: Record<string, unknown>;
+  started_at: string;
+}
+
+export interface SystemInfo {
+  product: string;
+  synthetic_facility: string;
+  environment: string;
+  service: string;
+  region?: string | null;
+  revision?: string | null;
+  model: string;
+  model_provider: string;
+  agent_framework: string;
+  adk_status: string;
+  event_bus: string;
+  state_store: string;
+  managed_agent_platform: Record<string, boolean>;
+  cloud_claim_active: boolean;
+}

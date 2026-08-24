@@ -1,0 +1,62 @@
+flowchart LR
+  UI[React Operations Console] --> API[Cloud Run forge-api]
+  API --> PubSub[Pub/Sub topics]
+  PubSub --> Ingest[Event Ingestion Service]
+  Ingest --> Ledger[(Event Ledger)]
+  Ledger --> Observer[Observer Agent]
+  Observer --> Incident[Incident Topic]
+  Incident --> Fleet[ADK Agent Fleet Orchestrator]
+
+  subgraph Agents
+    Observer
+    Diagnostic[Diagnostic Agent]
+    Knowledge[Knowledge Agent]
+    Production[Production Agent]
+    Recovery[Recovery Agent]
+    Supervisor[Supervisor / Policy Agent]
+  end
+
+  Fleet --> Diagnostic
+  Fleet --> Knowledge
+  Fleet --> Production
+  Fleet --> Recovery
+  Fleet --> Supervisor
+  Agents --> Gemini[Gemini 3.5 Flash]
+
+  subgraph State
+    Firestore[(Firestore)]
+    Memory[Memory Bank or MemoryService fallback]
+    Registry[Agent Registry or Firestore registry fallback]
+  end
+
+  API --> Firestore
+  Fleet --> Firestore
+  Supervisor --> Memory
+  Fleet --> Registry
+
+  subgraph Governance
+    Identity[Agent Identity or local identity abstraction]
+    Gateway[Agent Gateway when provisioned]
+    Armor[Model Armor when provisioned]
+    Policy[Deterministic Policy Engine]
+  end
+
+  Agents --> Identity
+  Agents --> Gateway
+  Gateway --> Armor
+  Supervisor --> Policy
+  Policy --> Firestore
+
+  subgraph Telemetry
+    OTel[OpenTelemetry spans]
+    Trace[Cloud Trace]
+    Logs[Cloud Logging]
+    UITrace[Decision Trace UI]
+  end
+
+  Fleet --> OTel
+  API --> OTel
+  OTel --> Trace
+  API --> Logs
+  Firestore --> UITrace
+  UITrace --> UI

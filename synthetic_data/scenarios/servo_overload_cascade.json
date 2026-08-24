@@ -1,0 +1,15 @@
+{
+  "scenario_id": "scenario-a-servo-overload-cascade",
+  "name": "Scenario A - Servo Overload Cascade",
+  "synthetic": true,
+  "facility": "Northstar Precision Works",
+  "machine_id": "MC-04",
+  "work_order_id": "MO-4821",
+  "part_number": "NP-4172",
+  "operation": "OP30",
+  "normal_cycle_time_sec": 184,
+  "required_quantity": 120,
+  "completed_quantity": 78,
+  "failure_alarm": "AXIS_SERVO_OVERLOAD_X",
+  "correlation_id": "trc_servo_overload_cascade"
+}

@@ -1,0 +1,45 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <list>
+          <option value="fastapi" />
+          <option value="uvicorn" />
+          <option value="Flask" />
+          <option value="pydantic" />
+          <option value="python-dotenv" />
+          <option value="google-cloud-secret-manager" />
+          <option value="sqlalchemy" />
+          <option value="psycopg2-binary" />
+          <option value="tenacity" />
+          <option value="blinker" />
+          <option value="contextily" />
+          <option value="geopandas" />
+          <option value="google-api-core" />
+          <option value="google-cloud-core" />
+          <option value="google-cloud-logging" />
+          <option value="prometheus-client" />
+          <option value="google-cloud-pubsub" />
+          <option value="google-cloud-storage" />
+          <option value="itsdangerous" />
+          <option value="pandas" />
+          <option value="pyproj" />
+          <option value="scikit-learn" />
+          <option value="shapely" />
+          <option value="werkzeug" />
+          <option value="pytest" />
+          <option value="pytest-cov" />
+          <option value="pytest-mock" />
+          <option value="pytest-asyncio" />
+          <option value="responses" />
+          <option value="freezegun" />
+          <option value="ultralytics" />
+          <option value="timm" />
+          <option value="CLIP" />
+          <option value="click" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>

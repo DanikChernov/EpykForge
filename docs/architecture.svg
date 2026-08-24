@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="720" viewBox="0 0 1180 720" role="img" aria-label="EPYK Forge architecture">
+  <rect width="1180" height="720" fill="#0b0f12"/>
+  <style>
+    .box{fill:#10191e;stroke:#31454e;stroke-width:2}
+    .store{fill:#0e1a16;stroke:#347a5c;stroke-width:2}
+    .gov{fill:#1a170f;stroke:#8c6f2a;stroke-width:2}
+    .tele{fill:#101727;stroke:#5a7f8b;stroke-width:2}
+    .text{fill:#e5eef2;font-family:Segoe UI,Arial,sans-serif;font-size:16px}
+    .small{fill:#9cafb7;font-family:Segoe UI,Arial,sans-serif;font-size:12px}
+    .line{stroke:#5a7f8b;stroke-width:2;fill:none;marker-end:url(#arrow)}
+  </style>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="#5a7f8b"/></marker></defs>
+  <text x="32" y="42" class="text" font-size="26">EPYK Forge Architecture</text>
+  <text x="32" y="66" class="small">Synthetic factory event to governed autonomous recovery workflow</text>
+
+  <rect x="40" y="120" width="210" height="70" class="box"/><text x="66" y="160" class="text">React Console</text>
+  <rect x="310" y="120" width="210" height="70" class="box"/><text x="350" y="160" class="text">Cloud Run API</text>
+  <rect x="580" y="120" width="210" height="70" class="box"/><text x="626" y="160" class="text">Pub/Sub</text>
+  <rect x="850" y="120" width="250" height="70" class="box"/><text x="884" y="160" class="text">Event Ingestion</text>
+
+  <path d="M250 155 H310" class="line"/><path d="M520 155 H580" class="line"/><path d="M790 155 H850" class="line"/>
+
+  <rect x="80" y="270" width="1020" height="150" rx="4" class="box"/>
+  <text x="104" y="300" class="text">ADK Agent Fleet</text>
+  <rect x="110" y="330" width="135" height="56" class="box"/><text x="128" y="364" class="small">Observer</text>
+  <rect x="270" y="330" width="135" height="56" class="box"/><text x="286" y="364" class="small">Diagnostic</text>
+  <rect x="430" y="330" width="135" height="56" class="box"/><text x="452" y="364" class="small">Knowledge</text>
+  <rect x="590" y="330" width="135" height="56" class="box"/><text x="610" y="364" class="small">Production</text>
+  <rect x="750" y="330" width="135" height="56" class="box"/><text x="772" y="364" class="small">Recovery</text>
+  <rect x="910" y="330" width="155" height="56" class="box"/><text x="928" y="364" class="small">Supervisor/Policy</text>
+  <path d="M975 190 V270" class="line"/>
+
+  <rect x="80" y="500" width="250" height="70" class="store"/><text x="124" y="540" class="text">Firestore</text>
+  <rect x="370" y="500" width="250" height="70" class="store"/><text x="406" y="540" class="text">Memory Bank</text>
+  <rect x="660" y="500" width="250" height="70" class="gov"/><text x="694" y="540" class="text">Gateway / Armor</text>
+  <rect x="950" y="500" width="170" height="70" class="tele"/><text x="982" y="540" class="text">Cloud Trace</text>
+
+  <path d="M205 420 V500" class="line"/><path d="M495 420 V500" class="line"/><path d="M785 420 V500" class="line"/><path d="M1035 420 V500" class="line"/>
+  <rect x="430" y="610" width="320" height="58" class="box"/><text x="470" y="646" class="text">Gemini 3.5 Flash</text>
+  <path d="M590 420 V610" class="line"/>
+</svg>

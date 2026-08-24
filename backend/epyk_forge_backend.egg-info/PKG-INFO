@@ -1,0 +1,24 @@
+Metadata-Version: 2.4
+Name: epyk-forge-backend
+Version: 0.1.0
+Summary: EPYK Forge autonomous synthetic manufacturing operations fleet
+Requires-Python: >=3.10
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: uvicorn[standard]>=0.30.0
+Requires-Dist: pydantic>=2.8.0
+Requires-Dist: pydantic-settings>=2.4.0
+Requires-Dist: google-adk>=2.0.0
+Requires-Dist: google-genai>=1.0.0
+Requires-Dist: google-cloud-firestore>=2.16.0
+Requires-Dist: google-cloud-pubsub>=2.22.0
+Requires-Dist: google-cloud-secret-manager>=2.20.0
+Requires-Dist: google-cloud-logging>=3.10.0
+Requires-Dist: opentelemetry-api>=1.25.0
+Requires-Dist: opentelemetry-sdk>=1.25.0
+Requires-Dist: opentelemetry-instrumentation-fastapi>=0.46b0
+Requires-Dist: python-dotenv>=1.0.1
+Provides-Extra: dev
+Requires-Dist: httpx>=0.27.0; extra == "dev"
+Requires-Dist: pytest>=8.2.0; extra == "dev"
+Requires-Dist: pytest-cov>=5.0.0; extra == "dev"
+Requires-Dist: ruff>=0.6.0; extra == "dev"

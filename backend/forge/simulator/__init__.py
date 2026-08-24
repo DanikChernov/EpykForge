@@ -1,0 +1,1 @@
+"""Synthetic factory simulator."""
