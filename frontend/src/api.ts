@@ -1,4 +1,16 @@
-import type { AgentManifest, Approval, Facility, Incident, Machine, SecurityEvent, SystemInfo, TraceSpan } from "./types";
+import type {
+  AgentManifest,
+  AdminSeedPreview,
+  AdminSetupStatus,
+  Approval,
+  DemoSeedStatus,
+  Facility,
+  Incident,
+  Machine,
+  SecurityEvent,
+  SystemInfo,
+  TraceSpan,
+} from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
 const DEMO_TOKEN = import.meta.env.VITE_DEMO_SUPERVISOR_TOKEN ?? "demo-supervisor-token";
@@ -29,6 +41,16 @@ export const api = {
   traces: () => request<TraceSpan[]>("/api/traces"),
   approvals: () => request<Approval[]>("/api/approvals"),
   system: () => request<SystemInfo>("/api/system/info"),
+  demoSeedStatus: () => request<DemoSeedStatus>("/api/demo/seed/status"),
+  importDemoSeed: () => request<DemoSeedStatus & { status: string }>("/api/demo/seed/import", { method: "POST" }),
+  enableDemoSeed: () => request<DemoSeedStatus & { status: string }>("/api/demo/seed/enable", { method: "POST" }),
+  disableDemoSeed: () => request<DemoSeedStatus & { status: string }>("/api/demo/seed/disable", { method: "POST" }),
+  adminSetupStatus: (pin: string) => request<AdminSetupStatus>("/api/admin/setup/status", { headers: { "x-admin-pin": pin } }),
+  adminSeedPreview: (pin: string) => request<AdminSeedPreview>("/api/admin/seed/preview", { headers: { "x-admin-pin": pin } }),
+  adminImportSeed: (pin: string) => request<DemoSeedStatus & { status: string }>("/api/admin/seed/import", { method: "POST", headers: { "x-admin-pin": pin } }),
+  adminEnableSeed: (pin: string) => request<DemoSeedStatus & { status: string }>("/api/admin/seed/enable", { method: "POST", headers: { "x-admin-pin": pin } }),
+  adminDisableSeed: (pin: string) => request<DemoSeedStatus & { status: string }>("/api/admin/seed/disable", { method: "POST", headers: { "x-admin-pin": pin } }),
+  adminGeminiSmoke: (pin: string) => request<Record<string, unknown>>("/api/admin/gemini/smoke", { method: "POST", headers: { "x-admin-pin": pin } }),
   resetDemo: () => request<{ status: string }>("/api/demo/reset", { method: "POST" }),
   startDemo: () => request<{ status: string; incident_id?: string }>("/api/demo/start", { method: "POST", body: JSON.stringify({ sync: false }) }),
   startDemoSync: () => request<{ status: string; incident_id?: string }>("/api/demo/start", { method: "POST", body: JSON.stringify({ sync: true, speed: 99 }) }),

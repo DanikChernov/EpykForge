@@ -5,19 +5,34 @@ import {
   ClipboardCheck,
   Database,
   Factory,
+  KeyRound,
+  Lock,
   Play,
   RadioTower,
   RotateCcw,
   Server,
+  Settings,
   ShieldCheck,
   Workflow,
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
-import type { AgentManifest, Approval, Facility, Incident, Machine, SecurityEvent, SystemInfo, TraceSpan } from "./types";
+import type {
+  AgentManifest,
+  AdminSeedPreview,
+  AdminSetupStatus,
+  Approval,
+  DemoSeedStatus,
+  Facility,
+  Incident,
+  Machine,
+  SecurityEvent,
+  SystemInfo,
+  TraceSpan,
+} from "./types";
 
-type View = "overview" | "factory" | "incident" | "fleet" | "registry" | "security" | "observability" | "cloud";
+type View = "overview" | "factory" | "incident" | "fleet" | "registry" | "security" | "observability" | "cloud" | "admin";
 type Filter = "ALL" | "RUNNING" | "IDLE" | "ALARM" | "MAINTENANCE" | "AT_RISK";
 
 interface Snapshot {
@@ -31,6 +46,7 @@ interface Snapshot {
   traces: TraceSpan[];
   approvals: Approval[];
   system?: SystemInfo;
+  demoSeed?: DemoSeedStatus;
 }
 
 const initialSnapshot: Snapshot = {
@@ -95,30 +111,48 @@ function MetricCard({ label, value, tone }: { label: string; value: string | num
   );
 }
 
-function DemoControls({ busy, onAction }: { busy: boolean; onAction: (name: string) => void }) {
+function DemoControls({
+  busy,
+  onAction,
+  demoSeed,
+}: {
+  busy: boolean;
+  onAction: (name: string) => void;
+  demoSeed?: DemoSeedStatus;
+}) {
+  const enabled = demoSeed?.demo_data_enabled ?? false;
   return (
     <section className="control-band" aria-label="Synthetic demo controls">
       <div>
         <p className="eyebrow">SYNTHETIC DEMO CONTROLS</p>
         <h2>Servo Overload Cascade</h2>
+        <span className={cls("seed-status", enabled ? "enabled" : "disabled")}>
+          Seed data {enabled ? "enabled" : "disabled"} · {demoSeed?.collections.machines ?? 0} machines
+        </span>
       </div>
       <div className="control-actions">
+        <button type="button" onClick={() => onAction("import_seed")} disabled={busy} title="Import complete demo seed data">
+          <Database size={18} /> Import Seed
+        </button>
+        <button type="button" onClick={() => onAction(enabled ? "disable_seed" : "enable_seed")} disabled={busy} title="Enable or disable seed data">
+          <ShieldCheck size={18} /> {enabled ? "Disable Seed" : "Enable Seed"}
+        </button>
         <button type="button" onClick={() => onAction("reset")} disabled={busy} title="Reset demo">
           <RotateCcw size={18} /> Reset
         </button>
-        <button type="button" onClick={() => onAction("security_attack")} disabled={busy} title="Enable injection document retrieval">
+        <button type="button" onClick={() => onAction("security_attack")} disabled={busy || !enabled} title="Enable injection document retrieval">
           <ShieldCheck size={18} /> Security Test
         </button>
-        <button type="button" onClick={() => onAction("failure")} disabled={busy} title="Force one retryable agent failure">
+        <button type="button" onClick={() => onAction("failure")} disabled={busy || !enabled} title="Force one retryable agent failure">
           <RadioTower size={18} /> Retry Test
         </button>
-        <button type="button" className="primary" onClick={() => onAction("start")} disabled={busy} title="Start hero scenario">
+        <button type="button" className="primary" onClick={() => onAction("start")} disabled={busy || !enabled} title="Start hero scenario">
           <Play size={18} /> Start Scenario
         </button>
-        <button type="button" onClick={() => onAction("servo_alarm")} disabled={busy} title="Inject servo alarm">
+        <button type="button" onClick={() => onAction("servo_alarm")} disabled={busy || !enabled} title="Inject servo alarm">
           <AlertTriangle size={18} /> Servo Alarm
         </button>
-        <button type="button" onClick={() => onAction("maintenance_resolved")} disabled={busy} title="Resolve maintenance step">
+        <button type="button" onClick={() => onAction("maintenance_resolved")} disabled={busy || !enabled} title="Resolve maintenance step">
           <CheckCircle2 size={18} /> Resolve
         </button>
       </div>
@@ -155,7 +189,7 @@ function Overview({ snapshot, onAction, busy, setView }: { snapshot: Snapshot; o
   const incident = snapshot.activeIncident;
   return (
     <main className="view">
-      <DemoControls busy={busy} onAction={onAction} />
+      <DemoControls busy={busy} onAction={onAction} demoSeed={snapshot.demoSeed} />
       <section className="metrics-grid">
         <MetricCard label="Facility Health" value={facility?.health_score ?? "-"} tone="cyan" />
         <MetricCard label="Running" value={facility?.machines_running ?? 0} />
@@ -510,6 +544,262 @@ function CloudView({ system }: { system?: SystemInfo }) {
   );
 }
 
+function SetupCheck({ label, ok, detail }: { label: string; ok: boolean; detail: string }) {
+  return (
+    <div className={cls("setup-check", ok ? "ok" : "needs-work")}>
+      {ok ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+      <div>
+        <strong>{label}</strong>
+        <span>{detail}</span>
+      </div>
+    </div>
+  );
+}
+
+function AdminPanel({ onPlatformChange }: { onPlatformChange: () => Promise<void> }) {
+  const [pin, setPin] = useState("");
+  const [authenticatedPin, setAuthenticatedPin] = useState<string | null>(null);
+  const [status, setStatus] = useState<AdminSetupStatus | null>(null);
+  const [preview, setPreview] = useState<AdminSeedPreview | null>(null);
+  const [smoke, setSmoke] = useState<Record<string, unknown> | null>(null);
+  const [adminError, setAdminError] = useState<string | null>(null);
+  const [adminBusy, setAdminBusy] = useState(false);
+
+  const loadAdmin = async (adminPin = authenticatedPin) => {
+    if (!adminPin) return;
+    setAdminBusy(true);
+    try {
+      const [setupStatus, seedPreview] = await Promise.all([
+        api.adminSetupStatus(adminPin),
+        api.adminSeedPreview(adminPin),
+      ]);
+      setStatus(setupStatus);
+      setPreview(seedPreview);
+      setAuthenticatedPin(adminPin);
+      setAdminError(null);
+    } catch (caught) {
+      setAdminError(caught instanceof Error ? caught.message : "Admin setup request failed");
+    } finally {
+      setAdminBusy(false);
+    }
+  };
+
+  const runAdminAction = async (action: "import" | "enable" | "disable" | "smoke") => {
+    if (!authenticatedPin) return;
+    setAdminBusy(true);
+    try {
+      if (action === "import") await api.adminImportSeed(authenticatedPin);
+      if (action === "enable") await api.adminEnableSeed(authenticatedPin);
+      if (action === "disable") await api.adminDisableSeed(authenticatedPin);
+      if (action === "smoke") setSmoke(await api.adminGeminiSmoke(authenticatedPin));
+      await loadAdmin(authenticatedPin);
+      await onPlatformChange();
+      setAdminError(null);
+    } catch (caught) {
+      setAdminError(caught instanceof Error ? caught.message : "Admin action failed");
+    } finally {
+      setAdminBusy(false);
+    }
+  };
+
+  if (!authenticatedPin || !status) {
+    return (
+      <main className="view">
+        <section className="panel admin-login">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">ADMIN SETUP</p>
+              <h2>Platform Setup Panel</h2>
+            </div>
+            <Lock size={24} />
+          </div>
+          <form
+            className="admin-pin-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void loadAdmin(pin);
+            }}
+          >
+            <label htmlFor="admin-pin">Admin PIN</label>
+            <div>
+              <input
+                id="admin-pin"
+                value={pin}
+                onChange={(event) => setPin(event.target.value)}
+                inputMode="numeric"
+                type="password"
+                autoComplete="off"
+                placeholder="1234"
+              />
+              <button type="submit" className="primary" disabled={adminBusy || pin.length === 0}>
+                <KeyRound size={18} /> Unlock
+              </button>
+            </div>
+          </form>
+          {adminError && <div className="error-banner">{adminError}</div>}
+        </section>
+      </main>
+    );
+  }
+
+  const seedEnabled = status.seed.demo_data_enabled;
+  return (
+    <main className="view admin-view">
+      <section className="control-band">
+        <div>
+          <p className="eyebrow">ADMIN SETUP</p>
+          <h2>Platform Setup</h2>
+          <span className={cls("seed-status", seedEnabled ? "enabled" : "disabled")}>
+            Seed {seedEnabled ? "enabled" : "disabled"} · {status.seed.collections.machines} machines · {status.seed.collections.knowledge_documents} knowledge docs
+          </span>
+        </div>
+        <div className="control-actions">
+          <button type="button" onClick={() => void loadAdmin()} disabled={adminBusy}>
+            <RotateCcw size={18} /> Refresh
+          </button>
+          <button type="button" className="primary" onClick={() => void runAdminAction("import")} disabled={adminBusy}>
+            <Database size={18} /> Import Complete Seed
+          </button>
+          <button type="button" onClick={() => void runAdminAction(seedEnabled ? "disable" : "enable")} disabled={adminBusy}>
+            <ShieldCheck size={18} /> {seedEnabled ? "Disable Seed" : "Enable Seed"}
+          </button>
+          <button type="button" onClick={() => void runAdminAction("smoke")} disabled={adminBusy}>
+            <RadioTower size={18} /> Gemini Smoke Test
+          </button>
+        </div>
+      </section>
+
+      {adminError && <div className="error-banner">{adminError}</div>}
+
+      <section className="split">
+        <div className="panel">
+          <h2>Gemini Flash Setup</h2>
+          <div className="setup-grid">
+            <SetupCheck
+              label="ADK import"
+              ok={status.gemini.google_adk_importable && status.gemini.adk_available}
+              detail={status.gemini.adk_status}
+            />
+            <SetupCheck
+              label="Google Gen AI SDK"
+              ok={status.gemini.google_genai_importable}
+              detail={status.gemini.google_genai_importable ? "google-genai is importable" : "Install backend dependencies"}
+            />
+            <SetupCheck
+              label="Real Gemini provider"
+              ok={status.gemini.real_gemini_enabled}
+              detail={`Current provider: ${status.gemini.model_provider}`}
+            />
+            <SetupCheck
+              label="Google Cloud project"
+              ok={status.gemini.google_cloud_project_configured}
+              detail={status.gemini.google_cloud_project ?? "Set GOOGLE_CLOUD_PROJECT"}
+            />
+            <SetupCheck
+              label="gcloud CLI"
+              ok={status.gemini.gcloud_on_path}
+              detail={status.gemini.gcloud_on_path ? "gcloud is on PATH" : "Install Google Cloud CLI for local auth/deploy"}
+            />
+            <SetupCheck
+              label="Model"
+              ok={status.gemini.model === "gemini-3.5-flash"}
+              detail={status.gemini.model}
+            />
+          </div>
+          {smoke && (
+            <pre className="admin-json">{JSON.stringify(smoke, null, 2)}</pre>
+          )}
+        </div>
+
+        <div className="panel">
+          <h2>Runtime</h2>
+          <div className="detail-grid">
+            <MetricCard label="Environment" value={status.runtime.environment} />
+            <MetricCard label="Store" value={status.runtime.store_backend} />
+            <MetricCard label="Event Bus" value={status.runtime.event_bus} />
+            <MetricCard label="Cloud" value={status.runtime.running_on_google_cloud ? "yes" : "no"} />
+          </div>
+          <div className="setup-copy">
+            <strong>To use real Gemini Flash locally</strong>
+            <code>gcloud auth application-default login</code>
+            <code>FORGE_MODEL_PROVIDER=REAL_GEMINI</code>
+            <code>GOOGLE_CLOUD_PROJECT=your-project</code>
+            <code>GOOGLE_GENAI_USE_ENTERPRISE=True</code>
+          </div>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Seeded Machines</h2>
+          <span className="model-badge">{preview?.machines.length ?? 0}</span>
+        </div>
+        <div className="admin-table">
+          {(preview?.machines ?? []).map((machine) => (
+            <div key={machine.machine_id} className="admin-row">
+              <strong>{machine.machine_id}</strong>
+              <span>{machine.model}</span>
+              <span>{machine.state}</span>
+              <span>{machine.current_work_order_id ?? "none"}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Seeded Work Orders</h2>
+          <span className="model-badge">{preview?.work_orders.length ?? 0}</span>
+        </div>
+        <div className="admin-table">
+          {(preview?.work_orders ?? []).map((order) => (
+            <div key={order.work_order_id} className="admin-row work-order-row">
+              <strong>{order.work_order_id}</strong>
+              <span>{order.part_number}</span>
+              <span>{order.operation}</span>
+              <span>{order.completed_quantity} / {order.required_quantity}</span>
+              <span>{order.assigned_machine_id}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Seeded Knowledge</h2>
+          <span className="model-badge">{preview?.knowledge_documents.length ?? 0}</span>
+        </div>
+        <div className="admin-knowledge-list">
+          {(preview?.knowledge_documents ?? []).map((doc) => (
+            <div key={doc.document_id} className={cls("list-row", doc.approved ? "" : "security-risk")}>
+              <strong>{doc.document_id} · {doc.title}</strong>
+              <span>{doc.document_type} · rev {doc.revision} · approved={String(doc.approved)}</span>
+              <small>{doc.tags.join(", ")}</small>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Seeded Agents</h2>
+          <span className="model-badge">{preview?.agent_registry.length ?? 0}</span>
+        </div>
+        <div className="admin-table">
+          {(preview?.agent_registry ?? []).map((agent) => (
+            <div key={agent.agent_id} className="admin-row agent-seed-row">
+              <strong>{agent.agent_id}</strong>
+              <span>{agent.version}</span>
+              <span>{agent.model}</span>
+              <span>{agent.identity}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+    </main>
+  );
+}
+
 export function App() {
   const [view, setView] = useState<View>("overview");
   const [snapshot, setSnapshot] = useState<Snapshot>(initialSnapshot);
@@ -522,7 +812,7 @@ export function App() {
   }, [snapshot.incidents]);
 
   const refresh = useCallback(async () => {
-    const [facility, machines, incidents, agents, registry, security, traces, approvals, system] = await Promise.all([
+    const [facility, machines, incidents, agents, registry, security, traces, approvals, system, demoSeed] = await Promise.all([
       api.facility(),
       api.machines(),
       api.incidents(),
@@ -532,10 +822,11 @@ export function App() {
       api.traces(),
       api.approvals(),
       api.system(),
+      api.demoSeedStatus(),
     ]);
     const latestIncidentId = incidents.find((incident) => !["LEARNED", "CANCELLED"].includes(incident.status))?.incident_id ?? incidents.at(-1)?.incident_id;
     const activeIncident = latestIncidentId ? await api.incident(latestIncidentId) : undefined;
-    setSnapshot({ facility, machines, incidents, agents, registry, security, traces, approvals, system, activeIncident });
+    setSnapshot({ facility, machines, incidents, agents, registry, security, traces, approvals, system, demoSeed, activeIncident });
     setError(null);
   }, []);
 
@@ -552,6 +843,15 @@ export function App() {
     try {
       if (name === "reset") {
         await api.resetDemo();
+        setView("overview");
+      } else if (name === "import_seed") {
+        await api.importDemoSeed();
+        setView("overview");
+      } else if (name === "enable_seed") {
+        await api.enableDemoSeed();
+        setView("overview");
+      } else if (name === "disable_seed") {
+        await api.disableDemoSeed();
         setView("overview");
       } else if (name === "start") {
         await api.startDemo();
@@ -613,6 +913,7 @@ export function App() {
           <button type="button" className={view === "security" ? "active" : ""} onClick={() => setView("security")}><ShieldCheck size={18} /> Security</button>
           <button type="button" className={view === "observability" ? "active" : ""} onClick={() => setView("observability")}><RadioTower size={18} /> Observability</button>
           <button type="button" className={view === "cloud" ? "active" : ""} onClick={() => setView("cloud")}><Server size={18} /> Cloud</button>
+          <button type="button" className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}><Settings size={18} /> Admin</button>
         </nav>
         <div className="sidebar-foot">
           <span>{snapshot.system?.model_provider ?? "loading"}</span>
@@ -635,6 +936,7 @@ export function App() {
         {view === "security" && <SecurityView events={snapshot.security} />}
         {view === "observability" && <ObservabilityView traces={snapshot.traces} incident={snapshot.activeIncident} />}
         {view === "cloud" && <CloudView system={snapshot.system} />}
+        {view === "admin" && <AdminPanel onPlatformChange={refresh} />}
       </div>
     </div>
   );

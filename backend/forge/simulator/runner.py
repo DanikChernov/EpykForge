@@ -16,6 +16,7 @@ from forge.domain.models import (
 from forge.domain.state_machine import transition_incident
 from forge.events.ingestion import EventIngestionService
 from forge.repositories.local_store import LocalStore
+from forge.simulator.seed_service import DemoDataDisabled
 from forge.tools.actions import ToolExecutor
 
 HERO_CORRELATION_ID = "trc_servo_overload_cascade"
@@ -36,6 +37,7 @@ class DemoScenarioRunner:
         return self.ingestion.ingest(event)
 
     def run_hero(self, *, speed: float = 8.0, sleep: bool = True) -> dict[str, Any]:
+        self._require_demo_enabled()
         self._set_scenario_status("RUNNING")
         samples = [
             (70, 187, "servo-load rising above baseline"),
@@ -102,6 +104,7 @@ class DemoScenarioRunner:
         return {"status": "started", "events": emitted, "incident_id": result.get("incident_id")}
 
     def inject_servo_alarm(self) -> dict[str, Any]:
+        self._require_demo_enabled()
         alarm = MachineEvent(
             event_id="evt_mc04_alarm_servo_x_manual",
             event_type=EventType.ALARM,
@@ -115,6 +118,7 @@ class DemoScenarioRunner:
         return self.emit(alarm)
 
     def enable_security_attack(self) -> dict[str, Any]:
+        self._require_demo_enabled()
         def update(state: dict[str, Any]) -> dict[str, Any]:
             scenario = state["scenario_state"]["default"]
             scenario["security_attack_enabled"] = True
@@ -124,6 +128,7 @@ class DemoScenarioRunner:
         return self.store.transaction(update)
 
     def inject_failure(self, agent_id: str = "diagnostic-agent") -> dict[str, Any]:
+        self._require_demo_enabled()
         def update(state: dict[str, Any]) -> dict[str, Any]:
             scenario = state["scenario_state"]["default"]
             scenario["force_next_agent_failure"] = agent_id
@@ -134,6 +139,7 @@ class DemoScenarioRunner:
         return self.store.transaction(update)
 
     def resolve_maintenance_step(self) -> dict[str, Any]:
+        self._require_demo_enabled()
         incident_raw = self.store.get("incidents", "INC-1042")
         if not incident_raw:
             return {"status": "missing_incident"}
@@ -192,3 +198,8 @@ class DemoScenarioRunner:
             scenario["updated_at"] = utc_now_iso()
 
         self.store.transaction(update)
+
+    def _require_demo_enabled(self) -> None:
+        scenario = self.store.get("scenario_state", "default") or {}
+        if not scenario.get("demo_data_enabled", False):
+            raise DemoDataDisabled("Synthetic demo seed data is disabled. Import or enable demo data first.")

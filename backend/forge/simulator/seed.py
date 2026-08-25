@@ -269,6 +269,8 @@ def build_seed_state(model: str = "gemini-3.5-flash") -> dict[str, Any]:
             "force_next_agent_failure": None,
             "forced_failures_seen": [],
             "demo_mode": True,
+            "demo_data_enabled": True,
+            "seed_profile": "northstar-precision-works-complete-demo",
             "updated_at": utc_now_iso(),
         }
     }

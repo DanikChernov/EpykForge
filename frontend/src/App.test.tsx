@@ -39,6 +39,19 @@ vi.mock("./api", () => ({
       managed_agent_platform: {},
       cloud_claim_active: false,
     }),
+    demoSeedStatus: () => Promise.resolve({
+      demo_data_enabled: true,
+      seed_profile: "northstar-precision-works-complete-demo",
+      scenario_status: "RESET",
+      collections: {
+        machines: 10,
+        work_orders: 3,
+        knowledge_documents: 31,
+        events: 0,
+        incidents: 0,
+        agent_registry: 6,
+      },
+    }),
   },
 }));
 

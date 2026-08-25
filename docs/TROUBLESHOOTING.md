@@ -38,3 +38,9 @@ Run:
 python scripts/seed_demo.py
 python scripts/run_hero_flow.py
 ```
+
+If scenario endpoints return `409`, enable or import the synthetic demo seed:
+
+```bash
+curl -X POST http://localhost:8080/api/demo/seed/import
+```

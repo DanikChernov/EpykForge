@@ -223,3 +223,68 @@ export interface SystemInfo {
   managed_agent_platform: Record<string, boolean>;
   cloud_claim_active: boolean;
 }
+
+export interface DemoSeedStatus {
+  demo_data_enabled: boolean;
+  seed_profile: string;
+  scenario_status: string;
+  collections: Record<string, number>;
+}
+
+export interface AdminSetupStatus {
+  admin: {
+    authenticated: boolean;
+    pin_configured: boolean;
+  };
+  runtime: {
+    environment: string;
+    service: string;
+    store_backend: string;
+    event_bus: string;
+    running_on_google_cloud: boolean;
+  };
+  gemini: {
+    model_provider: string;
+    model: string;
+    real_gemini_enabled: boolean;
+    google_cloud_project?: string | null;
+    google_cloud_project_configured: boolean;
+    google_cloud_location: string;
+    google_genai_use_enterprise: boolean;
+    adk_available: boolean;
+    adk_status: string;
+    google_adk_importable: boolean;
+    google_genai_importable: boolean;
+    gcloud_on_path: boolean;
+    smoke_test_required: boolean;
+  };
+  seed: DemoSeedStatus;
+  actions: Record<string, string>;
+}
+
+export interface AdminSeedPreview {
+  status: DemoSeedStatus;
+  machines: Machine[];
+  work_orders: Array<{
+    work_order_id: string;
+    part_number: string;
+    part_description: string;
+    operation: string;
+    required_quantity: number;
+    completed_quantity: number;
+    assigned_machine_id: string;
+    due_at: string;
+  }>;
+  knowledge_documents: Array<{
+    document_id: string;
+    title: string;
+    document_type: string;
+    revision: string;
+    approved: boolean;
+    equipment_scope: string[];
+    tags: string[];
+    content: string;
+  }>;
+  agent_registry: AgentManifest[];
+  scenario_state: Array<Record<string, unknown>>;
+}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+import shutil
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
@@ -21,7 +23,7 @@ from forge.events.ingestion import EventIngestionService
 from forge.policies.permissions import PolicyService
 from forge.repositories.local_store import LocalStore
 from forge.simulator.runner import HERO_CORRELATION_ID, DemoScenarioRunner
-from forge.simulator.seed import build_seed_state
+from forge.simulator.seed_service import DemoDataDisabled, SeedService
 from forge.telemetry.logging import configure_logging
 from forge.telemetry.tracing import TraceRecorder
 from forge.tools.actions import ToolExecutor
@@ -42,6 +44,13 @@ class RejectRequest(BaseModel):
     decision_note: str = "Rejected by synthetic supervisor"
 
 
+class AdminGeminiSmokeOutput(BaseModel):
+    status: str
+    model: str
+    summary: str
+    confidence: float
+
+
 class ServiceBundle(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
@@ -54,6 +63,7 @@ class ServiceBundle(BaseModel):
     fleet: AgentFleet
     ingestion: EventIngestionService
     runner: DemoScenarioRunner
+    seed: SeedService
 
 
 def build_services(settings: Settings) -> ServiceBundle:
@@ -63,11 +73,15 @@ def build_services(settings: Settings) -> ServiceBundle:
         store = FirestoreStore(project=settings.google_cloud_project)
     else:
         store = LocalStore(settings.state_path)
-    if not store.list("machines"):
-        store.reset(build_seed_state(settings.gemini_model))
     policy = PolicyService(store)
     tools = ToolExecutor(store, policy)
     traces = TraceRecorder(store)
+    seed = SeedService(store=store, model=settings.gemini_model)
+    if not store.get("scenario_state", "default"):
+        if settings.demo_data_enabled:
+            seed.import_complete_seed()
+        else:
+            seed.disable()
     if settings.event_bus == "pubsub":
         from forge.events.pubsub_bus import PubSubEventBus
 
@@ -99,6 +113,7 @@ def build_services(settings: Settings) -> ServiceBundle:
         fleet=fleet,
         ingestion=ingestion,
         runner=runner,
+        seed=seed,
     )
 
 
@@ -121,8 +136,17 @@ def _require_supervisor_token(x_demo_token: str | None) -> None:
         raise HTTPException(status_code=401, detail="Missing or invalid synthetic supervisor token")
 
 
+def _require_admin_pin(x_admin_pin: str | None) -> None:
+    if x_admin_pin != services.settings.admin_pin:
+        raise HTTPException(status_code=401, detail="Missing or invalid admin PIN")
+
+
 def _state() -> dict[str, Any]:
     return services.store.read_state()
+
+
+def _module_available(module_name: str) -> bool:
+    return importlib.util.find_spec(module_name) is not None
 
 
 @app.get("/health")
@@ -169,6 +193,109 @@ def system_info() -> dict[str, Any]:
         "managed_agent_platform": managed_flags,
         "cloud_claim_active": cloud,
     }
+
+
+@app.get("/api/admin/setup/status")
+def admin_setup_status(x_admin_pin: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_admin_pin(x_admin_pin)
+    seed_status = services.seed.status()
+    model_provider = services.fleet.model_service.provider_name
+    google_project = services.settings.google_cloud_project
+    return {
+        "admin": {"authenticated": True, "pin_configured": bool(services.settings.admin_pin)},
+        "runtime": {
+            "environment": services.settings.environment,
+            "service": services.settings.service_name,
+            "store_backend": services.settings.store_backend,
+            "event_bus": services.settings.event_bus,
+            "running_on_google_cloud": services.settings.running_on_google_cloud,
+        },
+        "gemini": {
+            "model_provider": model_provider,
+            "model": services.settings.gemini_model,
+            "real_gemini_enabled": model_provider == "REAL_GEMINI",
+            "google_cloud_project": google_project,
+            "google_cloud_project_configured": bool(google_project),
+            "google_cloud_location": services.settings.google_cloud_location,
+            "google_genai_use_enterprise": services.settings.google_genai_use_enterprise,
+            "adk_available": services.fleet.adk_status.available,
+            "adk_status": services.fleet.adk_status.message,
+            "google_adk_importable": _module_available("google.adk"),
+            "google_genai_importable": _module_available("google.genai"),
+            "gcloud_on_path": shutil.which("gcloud") is not None,
+            "smoke_test_required": model_provider == "REAL_GEMINI",
+        },
+        "seed": seed_status,
+        "actions": {
+            "import_seed": "/api/admin/seed/import",
+            "enable_seed": "/api/admin/seed/enable",
+            "disable_seed": "/api/admin/seed/disable",
+            "gemini_smoke": "/api/admin/gemini/smoke",
+        },
+    }
+
+
+@app.get("/api/admin/seed/preview")
+def admin_seed_preview(x_admin_pin: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_admin_pin(x_admin_pin)
+    return {
+        "status": services.seed.status(),
+        "machines": services.store.list("machines"),
+        "work_orders": services.store.list("work_orders"),
+        "knowledge_documents": services.store.list("knowledge_documents"),
+        "agent_registry": services.store.list("agent_registry"),
+        "scenario_state": services.store.list("scenario_state"),
+    }
+
+
+@app.post("/api/admin/seed/import")
+def admin_seed_import(x_admin_pin: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_admin_pin(x_admin_pin)
+    return services.seed.import_complete_seed() | {"status": "imported"}
+
+
+@app.post("/api/admin/seed/enable")
+def admin_seed_enable(x_admin_pin: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_admin_pin(x_admin_pin)
+    return services.seed.enable() | {"status": "enabled"}
+
+
+@app.post("/api/admin/seed/disable")
+def admin_seed_disable(x_admin_pin: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_admin_pin(x_admin_pin)
+    return services.seed.disable() | {"status": "disabled"}
+
+
+@app.post("/api/admin/gemini/smoke")
+def admin_gemini_smoke(x_admin_pin: str | None = Header(default=None)) -> dict[str, Any]:
+    _require_admin_pin(x_admin_pin)
+    if services.fleet.model_service.provider_name != "REAL_GEMINI":
+        return {
+            "status": "skipped",
+            "reason": "FORGE_MODEL_PROVIDER is not REAL_GEMINI",
+            "current_provider": services.fleet.model_service.provider_name,
+            "required_env": {
+                "FORGE_MODEL_PROVIDER": "REAL_GEMINI",
+                "FORGE_GEMINI_MODEL": "gemini-3.5-flash",
+                "GOOGLE_GENAI_USE_ENTERPRISE": "True",
+                "GOOGLE_CLOUD_PROJECT": "your-project",
+                "GOOGLE_CLOUD_LOCATION": "global",
+            },
+        }
+    output = services.fleet.model_service.generate_structured(
+        agent_id="admin-setup",
+        system_prompt=(
+            "You are an EPYK Forge setup verifier. Return a concise JSON health result. "
+            "Do not mention hidden reasoning."
+        ),
+        input_payload={
+            "task": "Verify Gemini model connectivity for EPYK Forge setup.",
+            "model": services.settings.gemini_model,
+            "synthetic_facility": "Northstar Precision Works",
+        },
+        output_model=AdminGeminiSmokeOutput,
+    )
+    return output.model_dump(mode="json")
 
 
 @app.get("/api/facility")
@@ -295,30 +422,56 @@ def post_event(event: MachineEvent) -> dict[str, Any]:
 
 @app.post("/api/demo/reset")
 def reset_demo() -> dict[str, Any]:
-    services.store.reset(build_seed_state(services.settings.gemini_model))
-    return {"status": "reset", "incident_id": None}
+    return services.seed.import_complete_seed() | {"status": "reset", "incident_id": None}
+
+
+@app.get("/api/demo/seed/status")
+def demo_seed_status() -> dict[str, Any]:
+    return services.seed.status()
+
+
+@app.post("/api/demo/seed/import")
+def import_demo_seed() -> dict[str, Any]:
+    return services.seed.import_complete_seed() | {"status": "imported"}
+
+
+@app.post("/api/demo/seed/enable")
+def enable_demo_seed() -> dict[str, Any]:
+    return services.seed.enable() | {"status": "enabled"}
+
+
+@app.post("/api/demo/seed/disable")
+def disable_demo_seed() -> dict[str, Any]:
+    return services.seed.disable() | {"status": "disabled"}
 
 
 @app.post("/api/demo/start")
 def start_demo(payload: StartDemoRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
     speed = payload.speed or services.settings.demo_speed
-    if payload.sync:
-        return services.runner.run_hero(speed=speed, sleep=False)
-    background_tasks.add_task(services.runner.run_hero, speed=speed, sleep=True)
-    return {"status": "started", "correlation_id": HERO_CORRELATION_ID}
+    try:
+        if payload.sync:
+            return services.runner.run_hero(speed=speed, sleep=False)
+        services.seed.require_enabled()
+        background_tasks.add_task(services.runner.run_hero, speed=speed, sleep=True)
+        return {"status": "started", "correlation_id": HERO_CORRELATION_ID}
+    except DemoDataDisabled as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post("/api/demo/inject/{event_name}")
 def inject_demo_event(event_name: str) -> dict[str, Any]:
-    if event_name == "servo_alarm":
-        return services.runner.inject_servo_alarm()
-    if event_name == "security_attack":
-        return services.runner.enable_security_attack()
-    if event_name == "failure":
-        return services.runner.inject_failure()
-    if event_name == "maintenance_resolved":
-        return services.runner.resolve_maintenance_step()
-    raise HTTPException(status_code=404, detail=f"Unknown demo event {event_name}")
+    try:
+        if event_name == "servo_alarm":
+            return services.runner.inject_servo_alarm()
+        if event_name == "security_attack":
+            return services.runner.enable_security_attack()
+        if event_name == "failure":
+            return services.runner.inject_failure()
+        if event_name == "maintenance_resolved":
+            return services.runner.resolve_maintenance_step()
+        raise HTTPException(status_code=404, detail=f"Unknown demo event {event_name}")
+    except DemoDataDisabled as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 def _approval_for_incident(incident_id: str, approval_id: str | None) -> Approval:

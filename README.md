@@ -55,6 +55,18 @@ npm.cmd run dev
 
 Open `http://localhost:5173`.
 
+## Use The Platform
+
+1. Open the web console.
+2. Go to `Admin`.
+3. Enter PIN `1234`.
+4. Use `Import Complete Seed` to load the full Northstar Precision Works demo dataset.
+5. Check `Seeded Machines`, `Seeded Work Orders`, `Seeded Knowledge`, and `Seeded Agents`.
+6. Check `Gemini Flash Setup`; when real Gemini env vars are configured, run `Gemini Smoke Test`.
+7. Go back to `Overview`, click `Start Scenario`, then open `Incident`.
+
+The Admin panel is the intended setup surface. The Overview page is the operator demo surface.
+
 ## Real Gemini Mode
 
 For the actual hackathon demo:
@@ -77,12 +89,23 @@ python scripts/run_hero_flow.py
 
 Or use the UI controls:
 
+- Import Seed
+- Enable Seed / Disable Seed
 - Reset
 - Security Test
 - Retry Test
 - Start Scenario
 - Servo Alarm
 - Resolve
+
+Seed data endpoints:
+
+```powershell
+Invoke-RestMethod http://localhost:8080/api/demo/seed/status
+Invoke-RestMethod http://localhost:8080/api/demo/seed/import -Method Post
+Invoke-RestMethod http://localhost:8080/api/demo/seed/disable -Method Post
+Invoke-RestMethod http://localhost:8080/api/demo/seed/enable -Method Post
+```
 
 ## Tests
 

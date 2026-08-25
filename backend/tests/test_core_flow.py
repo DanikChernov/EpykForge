@@ -14,6 +14,7 @@ from forge.policies.permissions import PolicyService
 from forge.repositories.local_store import LocalStore
 from forge.simulator.runner import DemoScenarioRunner
 from forge.simulator.seed import build_seed_state
+from forge.simulator.seed_service import DemoDataDisabled, SeedService
 from forge.telemetry.tracing import TraceRecorder
 from forge.tools.actions import ToolExecutor
 from forge.tools.scheduling import calculate_production_impact
@@ -115,3 +116,18 @@ def test_retry_failure_records_recovery_without_duplicate_actions(tmp_path: Path
     assert any(run["status"] == "RECOVERED" for run in runs)
     assert len(harness.store.list("maintenance_tasks")) == 1
     assert len(harness.store.list("schedule_proposals")) == 1
+
+
+def test_demo_seed_can_be_disabled_and_reenabled(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    seed = SeedService(store=harness.store, model=harness.settings.gemini_model)
+    disabled = seed.disable()
+    assert disabled["demo_data_enabled"] is False
+    assert disabled["collections"]["machines"] == 0
+    with pytest.raises(DemoDataDisabled):
+        harness.runner.run_hero(speed=99, sleep=False)
+    enabled = seed.import_complete_seed()
+    assert enabled["demo_data_enabled"] is True
+    assert enabled["collections"]["machines"] == 10
+    result = harness.runner.run_hero(speed=99, sleep=False)
+    assert result["incident_id"] == "INC-1042"

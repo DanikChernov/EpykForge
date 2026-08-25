@@ -20,7 +20,9 @@ class Settings(BaseSettings):
 
     demo_mode: bool = Field(default=True, alias="FORGE_DEMO_MODE")
     demo_speed: float = Field(default=8.0, alias="FORGE_DEMO_SPEED")
+    demo_data_enabled: bool = Field(default=True, alias="FORGE_DEMO_DATA_ENABLED")
     demo_supervisor_token: str = Field(default="demo-supervisor-token", alias="FORGE_DEMO_SUPERVISOR_TOKEN")
+    admin_pin: str = Field(default="1234", alias="FORGE_ADMIN_PIN")
 
     store_backend: str = Field(default="local", alias="FORGE_STORE_BACKEND")
     state_path: Path = Field(default=Path("./data/forge_state.json"), alias="FORGE_STATE_PATH")

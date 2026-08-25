@@ -131,6 +131,21 @@ button:disabled {
   letter-spacing: 0;
 }
 
+.seed-status {
+  display: inline-flex;
+  margin-top: 8px;
+  color: #8ea1aa;
+  font-size: 12px;
+}
+
+.seed-status.enabled {
+  color: #89d3a9;
+}
+
+.seed-status.disabled {
+  color: #ff9b91;
+}
+
 .topbar h1 {
   font-size: 28px;
 }
@@ -544,6 +559,109 @@ button:disabled {
   border: 1px solid #8f4339;
   background: #1c100f;
   color: #ffb3aa;
+}
+
+.admin-login {
+  max-width: 560px;
+}
+
+.admin-pin-form {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-pin-form div {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.admin-pin-form input {
+  min-height: 40px;
+  border: 1px solid #33474f;
+  background: #0d1418;
+  color: #e5eef2;
+  padding: 8px 10px;
+}
+
+.setup-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.setup-check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid #26343b;
+  background: #0d1418;
+}
+
+.setup-check.ok {
+  border-color: #347a5c;
+}
+
+.setup-check.needs-work {
+  border-color: #8c6f2a;
+}
+
+.setup-check div,
+.setup-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.setup-check span,
+.setup-copy code {
+  color: #9cafb7;
+  font-size: 12px;
+}
+
+.setup-copy {
+  padding: 12px;
+  border: 1px solid #26343b;
+  background: #0d1418;
+}
+
+.setup-copy code,
+.admin-json {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.admin-json {
+  overflow: auto;
+  max-height: 260px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #26343b;
+  background: #090e11;
+  color: #cfe1e6;
+}
+
+.admin-table,
+.admin-knowledge-list {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 140px 180px;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #26343b;
+  background: #0d1418;
+}
+
+.admin-row.work-order-row {
+  grid-template-columns: 120px 120px 100px 120px 150px;
+}
+
+.admin-row.agent-seed-row {
+  grid-template-columns: 190px 90px 160px minmax(220px, 1fr);
 }
 
 @media (max-width: 1100px) {
