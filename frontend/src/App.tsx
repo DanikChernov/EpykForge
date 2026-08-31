@@ -60,6 +60,12 @@ interface Snapshot {
   };
 }
 
+const initialHydrationState = {
+  hydrated: false,
+  machines_loaded: false,
+  seed_imported: false,
+};
+
 const initialSnapshot: Snapshot = {
   machines: [],
   workOrders: [],
@@ -76,12 +82,6 @@ const initialApiStatus: ApiConnectivityStatus = {
   state: "checking",
   apiUrl: api.target().baseUrl,
   message: "Checking Forge API.",
-};
-
-const initialHydrationState = {
-  hydrated: false,
-  machines_loaded: false,
-  seed_imported: false,
 };
 
 const fallbackWorkflow: WorkflowStage[] = [

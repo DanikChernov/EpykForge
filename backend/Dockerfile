@@ -6,7 +6,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 COPY backend /app/backend
-RUN python -m pip install --no-cache-dir -e /app/backend
+WORKDIR /app/backend
+RUN python -m pip install --no-cache-dir -e .
 
 EXPOSE 8080
-CMD ["python", "-m", "uvicorn", "forge.api.main:app", "--app-dir", "backend", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "-m", "uvicorn", "forge.api.main:app", "--host", "0.0.0.0", "--port", "8080"]
