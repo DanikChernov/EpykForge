@@ -295,7 +295,9 @@ export interface SystemInfo {
   environment: string;
   service: string;
   region?: string | null;
+  google_cloud_location?: string | null;
   revision?: string | null;
+  web_origin?: string | null;
   model: string;
   model_provider: string;
   agent_framework: string;

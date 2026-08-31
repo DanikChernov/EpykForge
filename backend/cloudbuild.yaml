@@ -1,15 +1,12 @@
 substitutions:
   _IMAGE: ""
-  _VITE_FORGE_API_URL: ""
 
 steps:
   - name: gcr.io/cloud-builders/docker
     args:
       - build
       - -f
-      - frontend/Dockerfile
-      - --build-arg
-      - VITE_FORGE_API_URL=${_VITE_FORGE_API_URL}
+      - backend/Dockerfile
       - -t
       - ${_IMAGE}
       - .

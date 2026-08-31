@@ -103,6 +103,21 @@ resource "google_cloud_run_v2_service" "api" {
         name  = "GOOGLE_CLOUD_LOCATION"
         value = "global"
       }
+      env {
+        name  = "GOOGLE_CLOUD_PROJECT"
+        value = var.project_id
+      }
+      env {
+        name  = "FORGE_CLOUD_RUN_REGION"
+        value = var.region
+      }
+      dynamic "env" {
+        for_each = var.web_origin == null ? [] : [var.web_origin]
+        content {
+          name  = "FORGE_WEB_ORIGIN"
+          value = env.value
+        }
+      }
     }
     scaling {
       min_instance_count = 0
@@ -131,4 +146,20 @@ resource "google_cloud_run_v2_service" "web" {
   }
 
   depends_on = [google_project_service.services]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "api_public_invoker" {
+  project  = var.project_id
+  location = google_cloud_run_v2_service.api.location
+  name     = google_cloud_run_v2_service.api.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "web_public_invoker" {
+  project  = var.project_id
+  location = google_cloud_run_v2_service.web.location
+  name     = google_cloud_run_v2_service.web.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
 }

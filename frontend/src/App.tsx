@@ -19,7 +19,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api } from "./api";
+import { api, type ApiConnectivityStatus } from "./api";
 import type {
   AgentManifest,
   AdminSeedPreview,
@@ -64,6 +64,12 @@ const initialSnapshot: Snapshot = {
   security: [],
   traces: [],
   approvals: [],
+};
+
+const initialApiStatus: ApiConnectivityStatus = {
+  state: "checking",
+  apiUrl: api.target().baseUrl,
+  message: "Checking Forge API.",
 };
 
 const fallbackWorkflow: WorkflowStage[] = [
@@ -131,6 +137,19 @@ function incidentElapsed(incident?: Incident) {
 
 function readableAction(value: string) {
   return value.replaceAll("_", " ").replaceAll(".", " ");
+}
+
+function apiStatusTone(status: ApiConnectivityStatus) {
+  if (status.state === "connected") return "good";
+  if (status.state === "checking") return "neutral";
+  return "bad";
+}
+
+function apiStatusLabel(status: ApiConnectivityStatus) {
+  if (status.state === "connected") return "API CONNECTED";
+  if (status.state === "checking") return "API CHECKING";
+  if (status.state === "misconfigured") return "API MISCONFIGURED";
+  return "API UNREACHABLE";
 }
 
 function workOrderFor(workOrders: WorkOrder[], workOrderId?: string | null) {
@@ -943,9 +962,31 @@ function ObservabilityView({ traces, incidents, incident }: { traces: TraceSpan[
   );
 }
 
-function CloudView({ system }: { system?: SystemInfo }) {
+function CloudView({ system, apiStatus }: { system?: SystemInfo; apiStatus: ApiConnectivityStatus }) {
   return (
     <main className="view">
+      <section className="panel cloud-panel">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">API</p>
+            <h2>Backend Connectivity</h2>
+          </div>
+          <span className={cls("pill", apiStatusTone(apiStatus))}>{apiStatusLabel(apiStatus)}</span>
+        </div>
+        <div className="cloud-grid">
+          <MetricCard label="API URL" value={apiStatus.apiUrl ?? "not configured"} tone={apiStatus.state === "connected" ? "green" : "red"} />
+          <MetricCard label="Health" value={apiStatus.health ?? (apiStatus.state === "checking" ? "checking" : "unknown")} />
+          <MetricCard label="Ready" value={apiStatus.ready ?? (apiStatus.state === "checking" ? "checking" : "unknown")} />
+          <MetricCard label="HTTP" value={apiStatus.httpStatus ?? "-"} tone={apiStatus.httpStatus !== undefined && apiStatus.httpStatus >= 400 ? "red" : undefined} />
+        </div>
+        {apiStatus.message && <div className={cls("api-message", apiStatus.state === "connected" ? "ok" : "error")}>{apiStatus.message}</div>}
+        {apiStatus.detail && (
+          <details className="diagnostics">
+            <summary>Diagnostics</summary>
+            <pre>{JSON.stringify({ contentType: apiStatus.contentType, detail: apiStatus.detail }, null, 2)}</pre>
+          </details>
+        )}
+      </section>
       <section className="panel cloud-panel">
         <div className="panel-header">
           <div>
@@ -1222,6 +1263,7 @@ function AdminPanel({ onPlatformChange }: { onPlatformChange: () => Promise<void
 export function App() {
   const [view, setView] = useState<View>("overview");
   const [snapshot, setSnapshot] = useState<Snapshot>(initialSnapshot);
+  const [apiStatus, setApiStatus] = useState<ApiConnectivityStatus>(initialApiStatus);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1231,6 +1273,11 @@ export function App() {
   }, [snapshot.incidents]);
 
   const refresh = useCallback(async () => {
+    const connectivity = await api.connectivity();
+    setApiStatus(connectivity);
+    if (connectivity.state !== "connected") {
+      throw new Error(connectivity.message ?? "Forge API unavailable.");
+    }
     const [facility, machines, workOrders, incidents, agents, registry, security, traces, approvals, system, demoSeed] = await Promise.all([
       api.facility(),
       api.machines(),
@@ -1338,7 +1385,9 @@ export function App() {
         </nav>
         <div className="sidebar-foot">
           <span>{snapshot.system?.synthetic_facility ?? "Synthetic Hackathon Facility"}</span>
-          <strong>{snapshot.system?.model_provider ?? "loading"} | {snapshot.system?.model ?? "gemini-3.5-flash"}</strong>
+          <strong>
+            {snapshot.system ? `${snapshot.system.model_provider} | ${snapshot.system.model}` : `${apiStatusLabel(apiStatus)} | gemini-3.5-flash`}
+          </strong>
         </div>
       </aside>
       <div className="content">
@@ -1349,6 +1398,7 @@ export function App() {
           </div>
           <div className="topbar-actions">
             <span className="model-badge">Synthetic Hackathon Facility</span>
+            <span className={cls("pill", apiStatusTone(apiStatus))}>{apiStatusLabel(apiStatus)}</span>
             {error && <div className="error-banner">{error}</div>}
           </div>
         </header>
@@ -1359,7 +1409,7 @@ export function App() {
         {view === "registry" && <RegistryView registry={snapshot.agents.length ? snapshot.agents : snapshot.registry} />}
         {view === "security" && <SecurityView events={snapshot.security} agents={snapshot.agents} />}
         {view === "observability" && <ObservabilityView traces={snapshot.traces} incidents={snapshot.incidents} incident={snapshot.activeIncident} />}
-        {view === "cloud" && <CloudView system={snapshot.system} />}
+        {view === "cloud" && <CloudView system={snapshot.system} apiStatus={apiStatus} />}
         {view === "admin" && <AdminPanel onPlatformChange={refresh} />}
       </div>
     </div>

@@ -167,6 +167,14 @@ let mockSecurity: unknown[] = [];
 
 vi.mock("./api", () => ({
   api: {
+    target: () => ({ baseUrl: "http://localhost:8080", configured: true, source: "local-default" }),
+    connectivity: () => Promise.resolve({
+      state: "connected",
+      apiUrl: "http://localhost:8080",
+      health: "ok",
+      ready: "ready",
+      message: "Forge API connected.",
+    }),
     facility: () => Promise.resolve({
       facility_name: "Northstar Precision Works",
       synthetic: true,

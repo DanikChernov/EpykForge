@@ -24,3 +24,9 @@ variable "gemini_model" {
   type        = string
   default     = "gemini-3.5-flash"
 }
+
+variable "web_origin" {
+  description = "Optional deployed forge-web origin allowed by forge-api CORS."
+  type        = string
+  default     = null
+}

@@ -56,7 +56,7 @@ class ServiceBundle(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
     settings: Settings
-    store: LocalStore
+    store: Any
     policy: PolicyService
     tools: ToolExecutor
     traces: TraceRecorder
@@ -125,9 +125,9 @@ services = build_services(settings)
 app = FastAPI(title="EPYK Forge API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.api_cors_origins,
+    allow_origins=settings.cors_allow_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -183,8 +183,10 @@ def system_info() -> dict[str, Any]:
         "synthetic_facility": "Northstar Precision Works",
         "environment": "google-cloud" if cloud else "local",
         "service": services.settings.service_name,
-        "region": services.settings.google_cloud_location if cloud else None,
+        "region": services.settings.cloud_run_region if cloud else None,
+        "google_cloud_location": services.settings.google_cloud_location,
         "revision": services.settings.cloud_run_revision,
+        "web_origin": services.settings.forge_web_origin,
         "model": services.settings.gemini_model,
         "model_provider": services.fleet.model_service.provider_name,
         "agent_framework": "Google ADK",

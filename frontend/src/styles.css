@@ -171,6 +171,8 @@ button:disabled {
 .topbar-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 10px;
 }
 
@@ -905,6 +907,49 @@ button:disabled {
   border-radius: var(--radius);
   background: var(--red-bg);
   color: #ffb3aa;
+}
+
+.api-message {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.api-message.ok {
+  border-color: #347a5c;
+  color: var(--green);
+  background: var(--green-bg);
+}
+
+.api-message.error {
+  border-color: #8f4339;
+  color: #ffb3aa;
+  background: var(--red-bg);
+}
+
+.diagnostics {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #070b0d;
+}
+
+.diagnostics summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  color: var(--muted);
+}
+
+.diagnostics pre {
+  overflow: auto;
+  max-height: 220px;
+  margin: 0;
+  padding: 0 12px 12px;
+  color: #cfe1e6;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
 }
 
 .error-text {

@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     store_backend: str = Field(default="local", alias="FORGE_STORE_BACKEND")
     state_path: Path = Field(default=Path("./data/forge_state.json"), alias="FORGE_STATE_PATH")
     event_bus: str = Field(default="inprocess", alias="FORGE_EVENT_BUS")
+    forge_web_origin: str | None = Field(default=None, alias="FORGE_WEB_ORIGIN")
+    cloud_run_region: str | None = Field(default=None, alias="FORGE_CLOUD_RUN_REGION")
 
     model_provider: str = Field(default="TEST_STUB", alias="FORGE_MODEL_PROVIDER")
     gemini_model: str = Field(default="gemini-3.5-flash", alias="FORGE_GEMINI_MODEL")
@@ -66,6 +68,17 @@ class Settings(BaseSettings):
     @property
     def running_on_google_cloud(self) -> bool:
         return bool(self.cloud_run_revision and self.google_cloud_project)
+
+    @property
+    def cors_allow_origins(self) -> list[str]:
+        origins = [origin.rstrip("/") for origin in self.api_cors_origins if origin]
+        if self.forge_web_origin:
+            origins.extend(
+                origin.strip().rstrip("/")
+                for origin in self.forge_web_origin.split(",")
+                if origin.strip()
+            )
+        return list(dict.fromkeys(origins))
 
 
 @lru_cache(maxsize=1)

@@ -53,7 +53,7 @@ cd frontend
 npm.cmd run dev
 ```
 
-Open `http://localhost:5173`.
+Open `http://localhost:5173`. Local Vite development targets the backend at `http://localhost:8080` when `VITE_FORGE_API_URL` is blank.
 
 ## Use The Platform
 
@@ -75,10 +75,27 @@ For the actual hackathon demo:
 $env:FORGE_MODEL_PROVIDER="REAL_GEMINI"
 $env:GOOGLE_GENAI_USE_ENTERPRISE="True"
 $env:GOOGLE_CLOUD_PROJECT="your-project"
-$env:GOOGLE_CLOUD_LOCATION="global"
+$env:GOOGLE_CLOUD_LOCATION="us-central1"
 ```
 
 Production mode refuses to run with `TEST_STUB`.
+
+## Cloud Run Deployment
+
+Use the PowerShell deployment path on Windows:
+
+```powershell
+gcloud.cmd auth login
+gcloud.cmd auth application-default login
+$env:GOOGLE_CLOUD_PROJECT="your-project-id"
+$env:GOOGLE_CLOUD_LOCATION="us-central1"
+.\scripts\bootstrap_gcp.ps1
+.\scripts\deploy.ps1
+```
+
+If Windows blocks local script execution, use `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\deploy.ps1`.
+
+`forge-web` is built after `forge-api` deploys. The deploy script resolves the real `forge-api` URL and supplies it to Vite as `VITE_FORGE_API_URL` during the frontend image build.
 
 ## Demo Commands
 
@@ -113,8 +130,11 @@ Invoke-RestMethod http://localhost:8080/api/demo/seed/enable -Method Post
 $env:PYTHONPATH="backend"
 python -m pytest backend/tests
 cd frontend
+npm.cmd run typecheck
 npm.cmd run test -- --run
 npm.cmd run build
+cd ..
+.\scripts\smoke_cloud.ps1
 ```
 
 ## Deployment
