@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     google_genai_use_enterprise: bool = Field(default=True, alias="GOOGLE_GENAI_USE_ENTERPRISE")
 
     demo_mode: bool = Field(default=True, alias="FORGE_DEMO_MODE")
-    demo_speed: float = Field(default=8.0, alias="FORGE_DEMO_SPEED")
+    demo_speed: float = Field(default=0.3, alias="FORGE_DEMO_SPEED")
     demo_data_enabled: bool = Field(default=True, alias="FORGE_DEMO_DATA_ENABLED")
     demo_supervisor_token: str = Field(default="demo-supervisor-token", alias="FORGE_DEMO_SUPERVISOR_TOKEN")
     admin_pin: str = Field(default="1234", alias="FORGE_ADMIN_PIN")
@@ -37,7 +37,24 @@ class Settings(BaseSettings):
     incident_timeout_seconds: int = Field(default=180, alias="FORGE_INCIDENT_TIMEOUT_SECONDS")
 
     api_cors_origins: list[str] = Field(
-        default_factory=lambda: ["http://localhost:5173", "http://localhost:3000"]
+        default_factory=lambda: [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
+            "http://localhost:5175",
+            "http://127.0.0.1:5175",
+            "http://localhost:5176",
+            "http://127.0.0.1:5176",
+            "http://localhost:5177",
+            "http://127.0.0.1:5177",
+            "http://localhost:5178",
+            "http://127.0.0.1:5178",
+            "http://localhost:5179",
+            "http://127.0.0.1:5179",
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ]
     )
 
     @model_validator(mode="after")

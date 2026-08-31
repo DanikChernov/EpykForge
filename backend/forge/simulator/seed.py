@@ -12,6 +12,7 @@ from forge.domain.models import (
     WorkOrderRisk,
     utc_now_iso,
 )
+from forge.domain.state_machine import ScenarioStatus
 from forge.repositories.local_store import empty_state
 
 
@@ -263,7 +264,7 @@ def build_seed_state(model: str = "gemini-3.5-flash") -> dict[str, Any]:
     }
     state["scenario_state"] = {
         "default": {
-            "status": "RESET",
+            "status": ScenarioStatus.READY.value,
             "hero_started_at": None,
             "security_attack_enabled": False,
             "force_next_agent_failure": None,

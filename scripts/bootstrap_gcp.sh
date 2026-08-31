@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_ID="${GOOGLE_CLOUD_PROJECT:?Set GOOGLE_CLOUD_PROJECT}"
+PROJECT_ID="epykforge-507203"
 REGION="${GOOGLE_CLOUD_LOCATION:-us-central1}"
 
-gcloud config set project "$PROJECT_ID"
+gcloud config set project "epykforge-507203"
+gcloud config set account "chessmaster212121@gmail.com"
 gcloud services enable \
   aiplatform.googleapis.com \
   run.googleapis.com \

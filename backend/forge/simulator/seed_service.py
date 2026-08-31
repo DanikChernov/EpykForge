@@ -4,6 +4,7 @@ from typing import Any
 
 from forge.agents.manifests import build_agent_manifests
 from forge.domain.models import utc_now_iso
+from forge.domain.state_machine import ScenarioStatus
 from forge.repositories.local_store import LocalStore, empty_state
 from forge.simulator.seed import build_seed_state
 
@@ -30,7 +31,7 @@ class SeedService:
         if not state.get("machines") or not state.get("work_orders") or not state.get("knowledge_documents"):
             return self.import_complete_seed()
         scenario["demo_data_enabled"] = True
-        scenario["status"] = "RESET"
+        scenario["status"] = ScenarioStatus.READY.value
         scenario["seed_profile"] = SEED_PROFILE
         scenario["updated_at"] = utc_now_iso()
         self.store.write_state(state)
@@ -44,7 +45,7 @@ class SeedService:
         }
         state["scenario_state"] = {
             "default": {
-                "status": "DISABLED",
+                "status": ScenarioStatus.DISABLED.value,
                 "hero_started_at": None,
                 "security_attack_enabled": False,
                 "force_next_agent_failure": None,

@@ -10,6 +10,7 @@ import type {
   SecurityEvent,
   SystemInfo,
   TraceSpan,
+  WorkOrder,
 } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
@@ -33,6 +34,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   facility: () => request<Facility>("/api/facility"),
   machines: () => request<Machine[]>("/api/machines"),
+  workOrders: () => request<WorkOrder[]>("/api/work-orders"),
   incidents: () => request<Incident[]>("/api/incidents"),
   incident: (incidentId: string) => request<Incident>(`/api/incidents/${incidentId}`),
   agents: () => request<AgentManifest[]>("/api/agents"),

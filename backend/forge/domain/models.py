@@ -176,6 +176,12 @@ class IncidentEvidence(BaseModel):
     title: str
     summary: str
     kind: Literal["event", "telemetry", "knowledge", "agent", "operator", "security"]
+    evidence_type: str = "event"
+    source_agent: str | None = None
+    source_event_id: str | None = None
+    source_event_ids: list[str] = Field(default_factory=list)
+    order: int = 0
+    metadata: dict[str, Any] = Field(default_factory=dict)
     confidence: float = Field(ge=0, le=1)
     created_at: str = Field(default_factory=utc_now_iso)
 
@@ -272,6 +278,79 @@ class SupervisorDecision(BaseModel):
     rationale: str
 
 
+class WorkflowStage(BaseModel):
+    stage_id: str
+    agent_id: str
+    label: str
+    status: AgentRunStatus = AgentRunStatus.PENDING
+    dependencies: list[str] = Field(default_factory=list)
+    action_summary: str | None = None
+    run_id: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    duration_ms: int | None = None
+    retry_count: int = 0
+    error: str | None = None
+    parallel_group: str | None = None
+    order: int
+
+
+WORKFLOW_STAGE_DEFINITIONS: list[dict[str, Any]] = [
+    {
+        "stage_id": "observer",
+        "agent_id": "observer-agent",
+        "label": "Observer",
+        "dependencies": [],
+        "parallel_group": None,
+        "order": 10,
+    },
+    {
+        "stage_id": "diagnostic",
+        "agent_id": "diagnostic-agent",
+        "label": "Diagnostic",
+        "dependencies": ["observer"],
+        "parallel_group": "analysis",
+        "order": 20,
+    },
+    {
+        "stage_id": "knowledge",
+        "agent_id": "knowledge-agent",
+        "label": "Knowledge",
+        "dependencies": ["observer"],
+        "parallel_group": "analysis",
+        "order": 30,
+    },
+    {
+        "stage_id": "production",
+        "agent_id": "production-agent",
+        "label": "Production",
+        "dependencies": ["diagnostic", "knowledge"],
+        "parallel_group": None,
+        "order": 40,
+    },
+    {
+        "stage_id": "recovery",
+        "agent_id": "recovery-agent",
+        "label": "Recovery",
+        "dependencies": ["production"],
+        "parallel_group": None,
+        "order": 50,
+    },
+    {
+        "stage_id": "supervisor",
+        "agent_id": "supervisor-agent",
+        "label": "Supervisor",
+        "dependencies": ["recovery"],
+        "parallel_group": None,
+        "order": 60,
+    },
+]
+
+
+def default_workflow_stages() -> list[WorkflowStage]:
+    return [WorkflowStage(**definition) for definition in WORKFLOW_STAGE_DEFINITIONS]
+
+
 class Incident(BaseModel):
     incident_id: str
     title: str
@@ -283,6 +362,7 @@ class Incident(BaseModel):
     created_at: str = Field(default_factory=utc_now_iso)
     updated_at: str = Field(default_factory=utc_now_iso)
     evidence: list[IncidentEvidence] = Field(default_factory=list)
+    workflow: list[WorkflowStage] = Field(default_factory=default_workflow_stages)
     diagnosis: Diagnosis | None = None
     knowledge_result: KnowledgeResult | None = None
     production_impact: ProductionImpact | None = None
@@ -385,9 +465,16 @@ class SecurityEvent(BaseModel):
     timestamp: str = Field(default_factory=utc_now_iso)
     severity: Severity
     category: str
+    event_type: str = "POLICY_VIOLATION"
     title: str
     description: str
     principal: str | None = None
+    agent: str | None = None
+    source: str | None = None
+    requested_action: str | None = None
+    policy: str | None = None
+    decision: str | None = None
+    reason: str | None = None
     denied_tool: str | None = None
     trace_id: str | None = None
     incident_id: str | None = None

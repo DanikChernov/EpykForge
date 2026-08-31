@@ -54,6 +54,22 @@ export interface Facility {
   model_provider: string;
 }
 
+export interface WorkOrder {
+  work_order_id: string;
+  part_number: string;
+  part_description: string;
+  operation: string;
+  required_quantity: number;
+  completed_quantity: number;
+  scrap_quantity: number;
+  due_at: string;
+  assigned_machine_id: string;
+  target_cycle_time_sec: number;
+  observed_cycle_time_sec: number;
+  risk: string;
+  downstream_orders: string[];
+}
+
 export interface AgentRun {
   run_id: string;
   agent_id: string;
@@ -61,7 +77,12 @@ export interface AgentRun {
   status: string;
   started_at: string;
   completed_at?: string | null;
+  input_refs: string[];
   output_summary?: string | null;
+  tool_calls: string[];
+  model?: string | null;
+  model_provider?: string | null;
+  trace_id?: string | null;
   error?: string | null;
   retry_count: number;
   duration_ms?: number | null;
@@ -103,6 +124,54 @@ export interface KnowledgeReference {
   injection_risk: boolean;
 }
 
+export interface IncidentEvidence {
+  evidence_id: string;
+  event_id?: string | null;
+  title: string;
+  summary: string;
+  kind: string;
+  evidence_type: string;
+  source_agent?: string | null;
+  source_event_id?: string | null;
+  source_event_ids: string[];
+  order: number;
+  metadata: Record<string, unknown>;
+  confidence: number;
+  created_at: string;
+}
+
+export interface WorkflowStage {
+  stage_id: string;
+  agent_id: string;
+  label: string;
+  status: string;
+  dependencies: string[];
+  action_summary?: string | null;
+  run_id?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  duration_ms?: number | null;
+  retry_count: number;
+  error?: string | null;
+  parallel_group?: string | null;
+  order: number;
+}
+
+export interface ScheduleProposal {
+  proposal_id: string;
+  incident_id: string;
+  work_order_id: string;
+  from_machine_id: string;
+  to_machine_id: string;
+  quantity: number;
+  estimated_minutes_saved: number;
+  risk: string;
+  status: string;
+  created_at: string;
+  approved_at?: string | null;
+  approved_by?: string | null;
+}
+
 export interface Incident {
   incident_id: string;
   title: string;
@@ -113,7 +182,8 @@ export interface Incident {
   correlation_id: string;
   created_at: string;
   updated_at: string;
-  evidence: Array<{ title: string; summary: string; kind: string; confidence: number; event_id?: string | null }>;
+  evidence: IncidentEvidence[];
+  workflow: WorkflowStage[];
   diagnosis?: {
     summary: string;
     confidence: number;
@@ -157,9 +227,12 @@ export interface Incident {
     rationale: string;
   } | null;
   approvals?: Approval[];
+  schedule_proposals?: ScheduleProposal[];
   action_log?: ActionExecution[];
   agent_runs?: AgentRun[];
   trace_spans?: TraceSpan[];
+  resolution_summary?: string | null;
+  learned_at?: string | null;
 }
 
 export interface Approval {
@@ -187,9 +260,16 @@ export interface SecurityEvent {
   timestamp: string;
   severity: Severity;
   category: string;
+  event_type: string;
   title: string;
   description: string;
   principal?: string | null;
+  agent?: string | null;
+  source?: string | null;
+  requested_action?: string | null;
+  policy?: string | null;
+  decision?: string | null;
+  reason?: string | null;
   denied_tool?: string | null;
   trace_id?: string | null;
   incident_id?: string | null;
@@ -200,11 +280,13 @@ export interface TraceSpan {
   trace_id: string;
   correlation_id: string;
   name: string;
+  parent_span_id?: string | null;
   agent_id?: string | null;
   status: string;
   duration_ms?: number | null;
   attributes: Record<string, unknown>;
   started_at: string;
+  ended_at?: string | null;
 }
 
 export interface SystemInfo {

@@ -18,6 +18,7 @@ from forge.domain.models import (
     MachineEvent,
     WorkOrder,
 )
+from forge.domain.state_machine import IllegalScenarioTransition, ScenarioStatus
 from forge.events.bus import EventBus, InProcessEventBus
 from forge.events.ingestion import EventIngestionService
 from forge.policies.permissions import PolicyService
@@ -335,6 +336,11 @@ def machine(machine_id: str) -> dict[str, Any]:
     return raw | {"events": events, "incidents": incidents}
 
 
+@app.get("/api/work-orders")
+def work_orders() -> list[dict[str, Any]]:
+    return services.store.list("work_orders")
+
+
 @app.get("/api/events")
 def events(machine_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
     rows = services.store.list("events")
@@ -355,9 +361,21 @@ def incident(incident_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Incident not found")
     approvals = [row for row in services.store.list("approvals") if row.get("incident_id") == incident_id]
     actions = [row for row in services.store.list("action_executions") if row.get("incident_id") == incident_id]
-    runs = [row for row in services.store.list("agent_runs") if row.get("incident_id") == incident_id]
+    runs = sorted(
+        [row for row in services.store.list("agent_runs") if row.get("incident_id") == incident_id],
+        key=lambda row: (row.get("started_at", ""), row.get("completed_at", ""), row.get("run_id", "")),
+    )
     traces = [row for row in services.store.list("traces") if row.get("correlation_id") == raw.get("correlation_id")]
-    return raw | {"approvals": approvals, "action_log": actions, "agent_runs": runs, "trace_spans": traces}
+    proposals = [
+        row for row in services.store.list("schedule_proposals") if row.get("incident_id") == incident_id
+    ]
+    return raw | {
+        "approvals": approvals,
+        "action_log": sorted(actions, key=lambda row: row.get("timestamp", "")),
+        "agent_runs": runs,
+        "trace_spans": traces,
+        "schedule_proposals": proposals,
+    }
 
 
 @app.get("/api/agents")
@@ -365,7 +383,10 @@ def agents() -> list[dict[str, Any]]:
     runs = services.store.list("agent_runs")
     result = []
     for manifest in services.store.list("agent_registry"):
-        agent_runs = [run for run in runs if run.get("agent_id") == manifest.get("agent_id")]
+        agent_runs = sorted(
+            [run for run in runs if run.get("agent_id") == manifest.get("agent_id")],
+            key=lambda row: (row.get("started_at", ""), row.get("completed_at", ""), row.get("run_id", "")),
+        )
         latest = agent_runs[-1] if agent_runs else None
         result.append(
             manifest
@@ -452,9 +473,23 @@ def start_demo(payload: StartDemoRequest, background_tasks: BackgroundTasks) -> 
         if payload.sync:
             return services.runner.run_hero(speed=speed, sleep=False)
         services.seed.require_enabled()
+        scenario = services.store.get("scenario_state", "default") or {}
+        if scenario.get("status") != ScenarioStatus.READY.value:
+            raise IllegalScenarioTransition(
+                f"Start Scenario requires {ScenarioStatus.READY.value}; current state is {scenario.get('status')}"
+            )
+        active = [
+            incident
+            for incident in services.store.list("incidents")
+            if incident.get("status") not in {"LEARNED", "FAILED", "ESCALATED", "CANCELLED"}
+        ]
+        if active:
+            raise ValueError("Reset the demo before starting another hero scenario")
         background_tasks.add_task(services.runner.run_hero, speed=speed, sleep=True)
         return {"status": "started", "correlation_id": HERO_CORRELATION_ID}
     except DemoDataDisabled as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (IllegalScenarioTransition, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
@@ -464,13 +499,15 @@ def inject_demo_event(event_name: str) -> dict[str, Any]:
         if event_name == "servo_alarm":
             return services.runner.inject_servo_alarm()
         if event_name == "security_attack":
-            return services.runner.enable_security_attack()
+            return services.runner.run_security_test()
         if event_name == "failure":
-            return services.runner.inject_failure()
+            return services.runner.run_retry_test()
         if event_name == "maintenance_resolved":
             return services.runner.resolve_maintenance_step()
         raise HTTPException(status_code=404, detail=f"Unknown demo event {event_name}")
     except DemoDataDisabled as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (IllegalScenarioTransition, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 

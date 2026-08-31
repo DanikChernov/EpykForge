@@ -13,7 +13,7 @@ from forge.domain.models import (
     TelemetrySample,
     utc_now_iso,
 )
-from forge.domain.state_machine import transition_incident
+from forge.domain.state_machine import ScenarioStatus, transition_incident, transition_scenario
 from forge.events.ingestion import EventIngestionService
 from forge.repositories.local_store import LocalStore
 from forge.simulator.seed_service import DemoDataDisabled
@@ -38,7 +38,8 @@ class DemoScenarioRunner:
 
     def run_hero(self, *, speed: float = 8.0, sleep: bool = True) -> dict[str, Any]:
         self._require_demo_enabled()
-        self._set_scenario_status("RUNNING")
+        self._reject_if_active_incident()
+        self._transition_scenario_status(ScenarioStatus.RUNNING_PRECURSOR)
         samples = [
             (70, 187, "servo-load rising above baseline"),
             (78, 190, "cycle-time drift emerging"),
@@ -84,6 +85,7 @@ class DemoScenarioRunner:
             if sleep:
                 self._sleep(4, speed)
 
+        self._transition_scenario_status(ScenarioStatus.ALARMED)
         alarm = MachineEvent(
             event_id="evt_mc04_alarm_servo_x",
             event_type=EventType.ALARM,
@@ -100,11 +102,20 @@ class DemoScenarioRunner:
         )
         result = self.emit(alarm)
         emitted.append(alarm.event_id)
-        self._set_scenario_status("AWAITING_APPROVAL")
+        if result.get("incident_id"):
+            self._transition_scenario_status(ScenarioStatus.INCIDENT_ACTIVE)
+            incident_raw = self.store.get("incidents", str(result["incident_id"]))
+            if incident_raw and incident_raw.get("status") == IncidentStatus.AWAITING_APPROVAL.value:
+                self._transition_scenario_status(ScenarioStatus.AWAITING_APPROVAL)
         return {"status": "started", "events": emitted, "incident_id": result.get("incident_id")}
 
     def inject_servo_alarm(self) -> dict[str, Any]:
         self._require_demo_enabled()
+        self._reject_if_active_incident()
+        if self._scenario_status() == ScenarioStatus.READY:
+            self._transition_scenario_status(ScenarioStatus.RUNNING_PRECURSOR)
+        if self._scenario_status() == ScenarioStatus.RUNNING_PRECURSOR:
+            self._transition_scenario_status(ScenarioStatus.ALARMED)
         alarm = MachineEvent(
             event_id="evt_mc04_alarm_servo_x_manual",
             event_type=EventType.ALARM,
@@ -115,7 +126,13 @@ class DemoScenarioRunner:
             trace_id=HERO_CORRELATION_ID,
             payload={"code": "AXIS_SERVO_OVERLOAD_X", "severity": "CRITICAL"},
         )
-        return self.emit(alarm)
+        result = self.emit(alarm)
+        if result.get("incident_id"):
+            self._transition_scenario_status(ScenarioStatus.INCIDENT_ACTIVE)
+            incident_raw = self.store.get("incidents", str(result["incident_id"]))
+            if incident_raw and incident_raw.get("status") == IncidentStatus.AWAITING_APPROVAL.value:
+                self._transition_scenario_status(ScenarioStatus.AWAITING_APPROVAL)
+        return result
 
     def enable_security_attack(self) -> dict[str, Any]:
         self._require_demo_enabled()
@@ -127,6 +144,11 @@ class DemoScenarioRunner:
 
         return self.store.transaction(update)
 
+    def run_security_test(self) -> dict[str, Any]:
+        self.enable_security_attack()
+        result = self.run_hero(speed=99, sleep=False)
+        return result | {"security_events": len(self.store.list("security_events"))}
+
     def inject_failure(self, agent_id: str = "diagnostic-agent") -> dict[str, Any]:
         self._require_demo_enabled()
         def update(state: dict[str, Any]) -> dict[str, Any]:
@@ -137,6 +159,16 @@ class DemoScenarioRunner:
             return scenario
 
         return self.store.transaction(update)
+
+    def run_retry_test(self, agent_id: str = "diagnostic-agent") -> dict[str, Any]:
+        self.inject_failure(agent_id)
+        result = self.run_hero(speed=99, sleep=False)
+        runs = [
+            run
+            for run in self.store.list("agent_runs")
+            if run.get("incident_id") == result.get("incident_id") and run.get("agent_id") == agent_id
+        ]
+        return result | {"retry_runs": runs}
 
     def resolve_maintenance_step(self) -> dict[str, Any]:
         self._require_demo_enabled()
@@ -188,16 +220,31 @@ class DemoScenarioRunner:
             content="MC-04 AXIS_SERVO_OVERLOAD_X with rising X-axis load and normal spindle load was resolved after chip accumulation was cleared near the X-axis cover area.",
             trace_id=HERO_CORRELATION_ID,
         )
-        self._set_scenario_status("COMPLETE")
+        if self._scenario_status() == ScenarioStatus.MONITORING:
+            self._transition_scenario_status(ScenarioStatus.RESOLVED)
+            self._transition_scenario_status(ScenarioStatus.LEARNED)
         return {"status": "resolved", "incident": incident}
 
-    def _set_scenario_status(self, status: str) -> None:
+    def _scenario_status(self) -> ScenarioStatus:
+        scenario = self.store.get("scenario_state", "default") or {}
+        return ScenarioStatus(scenario.get("status", ScenarioStatus.READY.value))
+
+    def _transition_scenario_status(self, target: ScenarioStatus) -> None:
         def update(state: dict[str, Any]) -> None:
             scenario = state["scenario_state"]["default"]
-            scenario["status"] = status
+            scenario["status"] = transition_scenario(scenario["status"], target).value
             scenario["updated_at"] = utc_now_iso()
 
         self.store.transaction(update)
+
+    def _reject_if_active_incident(self) -> None:
+        active = [
+            incident
+            for incident in self.store.list("incidents")
+            if incident.get("status") not in {"LEARNED", "FAILED", "ESCALATED", "CANCELLED"}
+        ]
+        if active:
+            raise ValueError("Reset the demo before starting another hero scenario")
 
     def _require_demo_enabled(self) -> None:
         scenario = self.store.get("scenario_state", "default") or {}
