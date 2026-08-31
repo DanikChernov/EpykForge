@@ -53,6 +53,11 @@ interface Snapshot {
   approvals: Approval[];
   system?: SystemInfo;
   demoSeed?: DemoSeedStatus;
+  hydration: {
+    hydrated: boolean;
+    machines_loaded: boolean;
+    seed_imported: boolean;
+  };
 }
 
 const initialSnapshot: Snapshot = {
@@ -64,12 +69,19 @@ const initialSnapshot: Snapshot = {
   security: [],
   traces: [],
   approvals: [],
+  hydration: initialHydrationState,
 };
 
 const initialApiStatus: ApiConnectivityStatus = {
   state: "checking",
   apiUrl: api.target().baseUrl,
   message: "Checking Forge API.",
+};
+
+const initialHydrationState = {
+  hydrated: false,
+  machines_loaded: false,
+  seed_imported: false,
 };
 
 const fallbackWorkflow: WorkflowStage[] = [
@@ -296,6 +308,30 @@ function Overview({ snapshot, onAction, busy, setView }: { snapshot: Snapshot; o
   const workOrder = workOrderFor(snapshot.workOrders, incident?.work_order_id ?? "MO-4821");
   const pendingApprovals = snapshot.approvals.filter((approval) => approval.status === "PROPOSED").length;
   const agentsActive = snapshot.agents.filter((agent) => ["RUNNING", "SUCCEEDED", "RECOVERED"].includes(agent.latest_status ?? "")).length;
+  
+  // Show loading state if not hydrated
+  if (!snapshot.hydration.hydrated) {
+    return (
+      <main className="view">
+        <DemoControls busy={busy} onAction={onAction} demoSeed={snapshot.demoSeed} activeIncident={snapshot.activeIncident} />
+        <section className="split overview-split">
+          <div className="panel">
+            <div className="panel-header">
+              <div>
+                <p className="eyebrow">Northstar Precision Works</p>
+                <h2>Synthetic Manufacturing Environment</h2>
+              </div>
+            </div>
+            <EmptyPanel
+              title="CONNECTING TO FORGE API"
+              body="Establishing connection and loading synthetic facility data..."
+            />
+          </div>
+        </section>
+      </main>
+    );
+  }
+  
   return (
     <main className="view">
       <DemoControls busy={busy} onAction={onAction} demoSeed={snapshot.demoSeed} activeIncident={snapshot.activeIncident} />
@@ -1293,7 +1329,25 @@ export function App() {
     ]);
     const latestIncidentId = incidents.find((incident) => !["LEARNED", "CANCELLED", "FAILED", "ESCALATED"].includes(incident.status))?.incident_id ?? incidents.at(-1)?.incident_id;
     const activeIncident = latestIncidentId ? await api.incident(latestIncidentId) : undefined;
-    setSnapshot({ facility, machines, workOrders, incidents, agents, registry, security, traces, approvals, system, demoSeed, activeIncident });
+    setSnapshot({ 
+      facility, 
+      machines, 
+      workOrders, 
+      incidents, 
+      agents, 
+      registry, 
+      security, 
+      traces, 
+      approvals, 
+      system, 
+      demoSeed, 
+      activeIncident,
+      hydration: {
+        hydrated: true,
+        machines_loaded: machines.length > 0,
+        seed_imported: demoSeed?.demo_data_enabled ?? false,
+      }
+    });
     setError(null);
   }, []);
 

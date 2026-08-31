@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     google_genai_use_enterprise: bool = Field(default=True, alias="GOOGLE_GENAI_USE_ENTERPRISE")
 
     demo_mode: bool = Field(default=True, alias="FORGE_DEMO_MODE")
-    demo_speed: float = Field(default=0.3, alias="FORGE_DEMO_SPEED")
+    demo_speed: float = Field(default=2.0, alias="FORGE_DEMO_SPEED")
     demo_data_enabled: bool = Field(default=True, alias="FORGE_DEMO_DATA_ENABLED")
     demo_supervisor_token: str = Field(default="demo-supervisor-token", alias="FORGE_DEMO_SUPERVISOR_TOKEN")
     admin_pin: str = Field(default="1234", alias="FORGE_ADMIN_PIN")
@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     model_provider: str = Field(default="TEST_STUB", alias="FORGE_MODEL_PROVIDER")
     gemini_model: str = Field(default="gemini-3.5-flash", alias="FORGE_GEMINI_MODEL")
     model_timeout_seconds: float = Field(default=30.0, alias="FORGE_MODEL_TIMEOUT")
+    model_retry_limit: int = Field(default=2, alias="FORGE_MODEL_RETRY_LIMIT")
+    model_retry_base_delay_ms: int = Field(default=120, alias="FORGE_MODEL_RETRY_BASE_DELAY_MS")
     max_model_calls_per_incident: int = Field(default=18, alias="FORGE_MAX_MODEL_CALLS_PER_INCIDENT")
     max_tool_calls_per_agent: int = Field(default=12, alias="FORGE_MAX_TOOL_CALLS_PER_AGENT")
     max_agent_depth: int = Field(default=6, alias="FORGE_MAX_AGENT_DEPTH")

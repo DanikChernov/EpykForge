@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
+from contextvars import ContextVar
 from pathlib import Path
 from time import perf_counter
 from typing import Any
 
 from forge.agents.adk_runtime import build_adk_agents
-from forge.agents.model_service import BaseModelService
+from forge.agents.model_service import (
+    BaseModelService,
+    DeterministicModelService,
+    is_transient_model_error,
+)
 from forge.config.settings import Settings
 from forge.domain.models import (
     WORKFLOW_STAGE_DEFINITIONS,
@@ -31,7 +37,13 @@ from forge.domain.models import (
     WorkOrder,
     utc_now_iso,
 )
-from forge.domain.state_machine import transition_incident
+from forge.domain.state_machine import (
+    SCENARIO_MESSAGES,
+    ScenarioStatus,
+    is_active_incident,
+    transition_incident,
+    transition_scenario,
+)
 from forge.policies.permissions import PolicyService
 from forge.repositories.local_store import LocalStore
 from forge.telemetry.tracing import TraceRecorder
@@ -39,6 +51,10 @@ from forge.tools.actions import ToolExecutor
 from forge.tools.scheduling import calculate_production_impact
 
 PROMPT_DIR = Path(__file__).parent / "prompts"
+ACTIVE_RUN_ID: ContextVar[str | None] = ContextVar("forge_active_run_id", default=None)
+ACTIVE_INCIDENT_ID: ContextVar[str | None] = ContextVar("forge_active_incident_id", default=None)
+ACTIVE_TRACE_ID: ContextVar[str | None] = ContextVar("forge_active_trace_id", default=None)
+ACTIVE_CORRELATION_ID: ContextVar[str | None] = ContextVar("forge_active_correlation_id", default=None)
 
 
 def load_prompts() -> dict[str, str]:
@@ -72,6 +88,228 @@ class AgentFleet:
         self.prompts = load_prompts()
         self.adk_status, self.adk_agents = build_adk_agents(settings.gemini_model, self.prompts)
 
+    @staticmethod
+    def _deterministic_jitter_ms(agent_id: str, attempt: int) -> int:
+        return (sum(ord(char) for char in agent_id) + attempt * 17) % 37
+
+    def _record_model_invocation(
+        self,
+        *,
+        agent_id: str,
+        output_model: str,
+        attempt: int,
+        status: str,
+        error: str | None = None,
+        fallback: bool = False,
+        transient: bool = False,
+        synthetic: bool = False,
+    ) -> None:
+        run_id = ACTIVE_RUN_ID.get() or "no-run"
+        incident_id = ACTIVE_INCIDENT_ID.get()
+        trace_id = ACTIVE_TRACE_ID.get()
+        invocation_id = f"mdl-{run_id}-{agent_id}-{attempt}-{status}".replace("_", "-")
+        row = {
+            "invocation_id": invocation_id,
+            "run_id": ACTIVE_RUN_ID.get(),
+            "agent_id": agent_id,
+            "incident_id": incident_id,
+            "trace_id": trace_id,
+            "provider": self.model_service.provider_name,
+            "model": self.settings.gemini_model,
+            "output_model": output_model,
+            "attempt": attempt,
+            "status": status,
+            "error": error,
+            "fallback": fallback,
+            "transient": transient,
+            "synthetic": synthetic,
+            "timestamp": utc_now_iso(),
+        }
+        self.store.upsert("model_invocations", invocation_id, row)
+
+    def _append_provider_fallback(self, *, agent_id: str, reason: str, trace_id: str | None) -> None:
+        def update(state: dict[str, Any]) -> None:
+            scenario = state.get("scenario_state", {}).get("default")
+            if not scenario:
+                return
+            fallbacks = scenario.setdefault("provider_fallbacks", [])
+            item = {
+                "agent_id": agent_id,
+                "provider": self.model_service.provider_name,
+                "reason": reason,
+                "trace_id": trace_id,
+                "timestamp": utc_now_iso(),
+            }
+            if not any(
+                existing.get("agent_id") == agent_id
+                and existing.get("reason") == reason
+                and existing.get("trace_id") == trace_id
+                for existing in fallbacks
+            ):
+                fallbacks.append(item)
+            scenario["updated_at"] = utc_now_iso()
+
+        self.store.transaction(update)
+
+    def _fallback_structured(
+        self,
+        *,
+        output_model: type,
+        input_payload: dict[str, Any],
+        fallback_draft: Any | None,
+    ) -> Any:
+        if fallback_draft is not None:
+            payload = fallback_draft.model_dump(mode="json") if hasattr(fallback_draft, "model_dump") else fallback_draft
+            return output_model.model_validate(payload)
+        return DeterministicModelService().generate_structured(
+            agent_id="deterministic-fallback",
+            system_prompt="deterministic fallback",
+            input_payload=input_payload,
+            output_model=output_model,
+        )
+
+    def _generate_structured_resilient(
+        self,
+        *,
+        agent_id: str,
+        system_prompt: str,
+        input_payload: dict[str, Any],
+        output_model: type,
+        fallback_draft: Any | None = None,
+    ) -> Any:
+        output_model_name = getattr(output_model, "__name__", "structured-output")
+        trace_id = ACTIVE_TRACE_ID.get() or input_payload.get("context", {}).get("incident_id") or "model"
+        correlation_id = ACTIVE_CORRELATION_ID.get() or trace_id
+        max_attempts = max(1, self.settings.model_retry_limit + 1)
+
+        if self.model_service.provider_name == "TEST_STUB":
+            with self.traces.span(
+                trace_id=trace_id,
+                correlation_id=correlation_id,
+                name="model.invoke",
+                agent_id=agent_id,
+                attributes={
+                    "provider": "TEST_STUB",
+                    "model": self.settings.gemini_model,
+                    "attempt": 1,
+                    "output_model": output_model_name,
+                    "deterministic": True,
+                },
+            ):
+                result = self.model_service.generate_structured(
+                    agent_id=agent_id,
+                    system_prompt=system_prompt,
+                    input_payload=input_payload,
+                    output_model=output_model,
+                )
+            self._record_model_invocation(
+                agent_id=agent_id,
+                output_model=output_model_name,
+                attempt=1,
+                status="TEST_STUB",
+                synthetic=True,
+            )
+            return result
+
+        last_error: BaseException | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                with self.traces.span(
+                    trace_id=trace_id,
+                    correlation_id=correlation_id,
+                    name="model.invoke",
+                    agent_id=agent_id,
+                    attributes={
+                        "provider": self.model_service.provider_name,
+                        "model": self.settings.gemini_model,
+                        "attempt": attempt,
+                        "max_attempts": max_attempts,
+                        "output_model": output_model_name,
+                    },
+                ):
+                    result = self.model_service.generate_structured(
+                        agent_id=agent_id,
+                        system_prompt=system_prompt,
+                        input_payload=input_payload,
+                        output_model=output_model,
+                    )
+                self._record_model_invocation(
+                    agent_id=agent_id,
+                    output_model=output_model_name,
+                    attempt=attempt,
+                    status="LIVE_OK",
+                )
+                return result
+            except Exception as exc:
+                last_error = exc
+                transient = is_transient_model_error(exc)
+                self._record_model_invocation(
+                    agent_id=agent_id,
+                    output_model=output_model_name,
+                    attempt=attempt,
+                    status="LIVE_FAILED",
+                    error=str(exc),
+                    transient=transient,
+                )
+                if not transient or attempt >= max_attempts:
+                    break
+                backoff_ms = min(
+                    self.settings.model_retry_base_delay_ms * (2 ** (attempt - 1))
+                    + self._deterministic_jitter_ms(agent_id, attempt),
+                    750,
+                )
+                with self.traces.span(
+                    trace_id=trace_id,
+                    correlation_id=correlation_id,
+                    name="model.retry.backoff",
+                    agent_id=agent_id,
+                    attributes={
+                        "provider": self.model_service.provider_name,
+                        "attempt": attempt,
+                        "backoff_ms": backoff_ms,
+                        "transient": transient,
+                    },
+                ):
+                    time.sleep(backoff_ms / 1000)
+
+        reason = str(last_error or "model unavailable")
+        fallback = self._fallback_structured(
+            output_model=output_model,
+            input_payload=input_payload,
+            fallback_draft=fallback_draft,
+        )
+        self._record_model_invocation(
+            agent_id=agent_id,
+            output_model=output_model_name,
+            attempt=max_attempts + 1,
+            status="FALLBACK_USED",
+            error=reason,
+            fallback=True,
+            transient=True,
+            synthetic=True,
+        )
+        self._append_provider_fallback(agent_id=agent_id, reason=reason, trace_id=trace_id)
+        span = {
+            "span_id": f"span-{ACTIVE_RUN_ID.get() or agent_id}-model-fallback",
+            "trace_id": trace_id,
+            "correlation_id": correlation_id,
+            "name": "model.fallback",
+            "agent_id": agent_id,
+            "status": "FALLBACK",
+            "started_at": utc_now_iso(),
+            "ended_at": utc_now_iso(),
+            "duration_ms": 1,
+            "attributes": {
+                "provider": self.model_service.provider_name,
+                "model": self.settings.gemini_model,
+                "reason": reason,
+                "output_model": output_model_name,
+                "deterministic": True,
+            },
+        }
+        self.store.append("traces", span)
+        return fallback
+
     def _structured_from_draft(
         self,
         *,
@@ -85,11 +323,12 @@ class AgentFleet:
             "draft": draft.model_dump(mode="json") if hasattr(draft, "model_dump") else draft,
             "instruction": "Validate and improve wording without changing verified facts, policy effects, or numeric calculations.",
         }
-        return self.model_service.generate_structured(
+        return self._generate_structured_resilient(
             agent_id=agent_id,
             system_prompt=self.prompts[agent_id],
             input_payload=payload,
             output_model=output_model,
+            fallback_draft=draft,
         )
 
     @staticmethod
@@ -144,6 +383,9 @@ class AgentFleet:
             stage.retry_count = max(latest.retry_count, len(failed))
             stage.action_summary = latest.output_summary or stage.action_summary
             stage.error = latest.error
+            stage.provider_status = latest.provider_status
+            stage.fallback_used = latest.fallback_used
+            stage.fallback_reason = latest.fallback_reason
             if latest.status == AgentRunStatus.RECOVERED and failed:
                 stage.error = f"Recovered after: {failed[-1].error}"
 
@@ -189,6 +431,9 @@ class AgentFleet:
                 stage.retry_count = run.retry_count
                 stage.action_summary = run.output_summary or stage.action_summary
                 stage.error = run.error
+                stage.provider_status = run.provider_status
+                stage.fallback_used = run.fallback_used
+                stage.fallback_reason = run.fallback_reason
             current.workflow = stages
             current.updated_at = utc_now_iso()
             state["incidents"][incident_id] = current.model_dump(mode="json")
@@ -325,6 +570,71 @@ class AgentFleet:
             )
         return evidence
 
+    def _complete_run_provider_state(self, run: AgentRun) -> AgentRun:
+        invocations = [
+            item
+            for item in self.store.list("model_invocations")
+            if item.get("run_id") == run.run_id and item.get("agent_id") == run.agent_id
+        ]
+        if any(item.get("fallback") for item in invocations):
+            fallback = next(item for item in invocations if item.get("fallback"))
+            run.provider_status = "FALLBACK"
+            run.fallback_used = True
+            run.fallback_reason = str(fallback.get("error") or "deterministic fallback used")
+        elif any(item.get("status") == "LIVE_OK" for item in invocations):
+            run.provider_status = "LIVE"
+            run.fallback_used = False
+        elif any(item.get("status") == "TEST_STUB" for item in invocations):
+            run.provider_status = "TEST_STUB"
+            run.fallback_used = False
+        elif run.synthetic_failure:
+            run.provider_status = "SYNTHETIC_FAILURE"
+            run.fallback_used = False
+        else:
+            run.provider_status = self.model_service.provider_name
+        return run
+
+    def _set_scenario_status(self, target: ScenarioStatus, message: str | None = None) -> None:
+        def update(state: dict[str, Any]) -> None:
+            scenario = state.get("scenario_state", {}).get("default")
+            if not scenario:
+                return
+            current = scenario.get("status", ScenarioStatus.READY.value)
+            try:
+                scenario["status"] = transition_scenario(current, target).value
+            except Exception:
+                if current != target.value:
+                    scenario["status"] = target.value
+            scenario["message"] = message or SCENARIO_MESSAGES[target]
+            scenario["updated_at"] = utc_now_iso()
+
+        self.store.transaction(update)
+
+    def ensure_incident_for_alarm(self, event: MachineEvent) -> Incident | None:
+        if not event.machine_id:
+            return None
+        incident_id = self._candidate_incident_id(event)
+        if not incident_id:
+            return None
+        existing = self.store.get("incidents", incident_id)
+        if existing and is_active_incident(str(existing.get("status"))):
+            return Incident.model_validate(existing)
+        recent_events = self.store.list("events")[-12:]
+        evidence_ids = [
+            evt["event_id"] for evt in recent_events if evt.get("machine_id") == event.machine_id
+        ][-7:]
+        if event.event_id not in evidence_ids:
+            evidence_ids.append(event.event_id)
+        finding = ObserverFinding(
+            incident_required=True,
+            severity=Severity.CRITICAL,
+            machine_id=event.machine_id,
+            reason="Servo overload following increasing X-axis load trend",
+            evidence_event_ids=evidence_ids,
+            confidence=0.94,
+        )
+        return self.create_incident_from_finding(event, finding)
+
     def _run_agent(
         self,
         *,
@@ -355,6 +665,10 @@ class AgentFleet:
         self.store.upsert("agent_runs", run.run_id, run.model_dump(mode="json"))
         self._mark_workflow_stage(incident_id, agent_id, run)
 
+        token_run = ACTIVE_RUN_ID.set(run.run_id)
+        token_incident = ACTIVE_INCIDENT_ID.set(incident_id)
+        token_trace = ACTIVE_TRACE_ID.set(trace_id)
+        token_correlation = ACTIVE_CORRELATION_ID.set(correlation_id)
         try:
             with self.traces.span(
                 trace_id=trace_id,
@@ -375,7 +689,8 @@ class AgentFleet:
                         scenario_state["updated_at"] = utc_now_iso()
 
                     self.store.transaction(mark_failed)
-                    raise TimeoutError("Synthetic Gemini request timeout")
+                    run.synthetic_failure = True
+                    raise TimeoutError("Synthetic transient provider failure: first attempt failed by retry fixture")
                 run.output_summary = fn()
                 run.status = AgentRunStatus.SUCCEEDED
         except Exception as exc:
@@ -384,9 +699,32 @@ class AgentFleet:
             run.retry_count += 1
             run.completed_at = utc_now_iso()
             run.duration_ms = int((perf_counter() - start) * 1000)
+            run = self._complete_run_provider_state(run)
             self.store.upsert("agent_runs", run.run_id, run.model_dump(mode="json"))
             self._mark_workflow_stage(incident_id, agent_id, run)
             if should_fail_once:
+                backoff_ms = min(self.settings.model_retry_base_delay_ms, 750)
+                self.store.append(
+                    "traces",
+                    {
+                        "span_id": f"span-{run.run_id}-retry-backoff",
+                        "trace_id": trace_id,
+                        "correlation_id": correlation_id,
+                        "name": "agent.retry.backoff",
+                        "agent_id": agent_id,
+                        "status": "RETRY",
+                        "started_at": utc_now_iso(),
+                        "ended_at": utc_now_iso(),
+                        "duration_ms": backoff_ms,
+                        "attributes": {
+                            "incident_id": incident_id,
+                            "synthetic": True,
+                            "attempt": 1,
+                            "backoff_ms": backoff_ms,
+                            "reason": run.error,
+                        },
+                    },
+                )
                 recovered = self._run_agent(
                     agent_id=agent_id,
                     incident_id=incident_id,
@@ -398,13 +736,20 @@ class AgentFleet:
                 )
                 recovered.status = AgentRunStatus.RECOVERED
                 recovered.retry_count = 1
+                recovered = self._complete_run_provider_state(recovered)
                 self.store.upsert("agent_runs", recovered.run_id, recovered.model_dump(mode="json"))
                 self._mark_workflow_stage(incident_id, agent_id, recovered)
                 return recovered
             raise
+        finally:
+            ACTIVE_CORRELATION_ID.reset(token_correlation)
+            ACTIVE_TRACE_ID.reset(token_trace)
+            ACTIVE_INCIDENT_ID.reset(token_incident)
+            ACTIVE_RUN_ID.reset(token_run)
 
         run.completed_at = utc_now_iso()
         run.duration_ms = int((perf_counter() - start) * 1000)
+        run = self._complete_run_provider_state(run)
         self.store.upsert("agent_runs", run.run_id, run.model_dump(mode="json"))
         self._mark_workflow_stage(incident_id, agent_id, run)
         return run
@@ -420,7 +765,7 @@ class AgentFleet:
             ][-7:]
             if event.event_id not in evidence_ids:
                 evidence_ids.append(event.event_id)
-            finding = self.model_service.generate_structured(
+            finding = self._generate_structured_resilient(
                 agent_id="observer-agent",
                 system_prompt=self.prompts["observer-agent"],
                 input_payload={
@@ -454,11 +799,13 @@ class AgentFleet:
             Incident.model_validate(raw)
             for raw in self.store.list("incidents")
             if raw["machine_id"] == event.machine_id
-            and raw["status"] not in {"LEARNED", "FAILED", "ESCALATED", "CANCELLED"}
+            and is_active_incident(str(raw["status"]))
         ]
         if active:
             return active[0]
         machine = Machine.model_validate(self.store.get("machines", event.machine_id))
+        
+        # Create incident with minimal evidence first, then persist immediately
         incident = Incident(
             incident_id=incident_id,
             title="Unexpected X-Axis Servo Overload",
@@ -467,15 +814,22 @@ class AgentFleet:
             machine_id=event.machine_id,
             work_order_id=event.work_order_id or machine.current_work_order_id,
             correlation_id=event.correlation_id,
-            evidence=self._build_initial_evidence(
-                incident_id=incident_id,
-                event=event,
-                finding=finding,
-            ),
+            evidence=[],  # Start with empty evidence, add after incident is persisted
+        )
+        
+        # Persist incident IMMEDIATELY so it exists before any references
+        self.store.upsert("incidents", incident.incident_id, incident.model_dump(mode="json"))
+        
+        # Now add evidence and update
+        incident.evidence = self._build_initial_evidence(
+            incident_id=incident_id,
+            event=event,
+            finding=finding,
         )
         incident = transition_incident(incident, IncidentStatus.TRIAGED)
         incident.workflow = self._workflow_from_runs(incident)
         self.store.upsert("incidents", incident.incident_id, incident.model_dump(mode="json"))
+        self._set_scenario_status(ScenarioStatus.INCIDENT_OPEN)
         self.policy.evaluate(
             principal="observer-agent",
             action="create_incident",
@@ -497,6 +851,7 @@ class AgentFleet:
         trace_id = incident.correlation_id
         correlation_id = incident.correlation_id
         self._sync_workflow_from_runs(incident_id)
+        self._set_scenario_status(ScenarioStatus.DIAGNOSING)
 
         def update_incident(mutator: Callable[[Incident], Incident]) -> Incident:
             def write(state: dict[str, Any]) -> dict[str, Any]:
@@ -559,6 +914,10 @@ class AgentFleet:
                 tool_calls=["knowledge.search", "incidents.evidence.add", "security.events.create"],
             )
 
+        incident = Incident.model_validate(self.store.get("incidents", incident_id))
+        if incident.status == IncidentStatus.DIAGNOSIS_READY:
+            self._set_scenario_status(ScenarioStatus.DIAGNOSIS_READY)
+
         def production() -> str:
             impact = self._analyze_production(incident_id)
             update_incident(lambda item: self._attach_impact(item, impact))
@@ -612,6 +971,10 @@ class AgentFleet:
                 ],
             )
 
+        incident = Incident.model_validate(self.store.get("incidents", incident_id))
+        if incident.recovery_plan:
+            self._set_scenario_status(ScenarioStatus.RECOVERY_PLANNED)
+
         def supervisor() -> str:
             decision = self._supervise_and_execute(incident_id)
             update_incident(lambda item: self._attach_supervisor_decision(item, decision))
@@ -637,7 +1000,12 @@ class AgentFleet:
             )
 
         self._sync_workflow_from_runs(incident_id)
-        return Incident.model_validate(self.store.get("incidents", incident_id))
+        incident = Incident.model_validate(self.store.get("incidents", incident_id))
+        if incident.status == IncidentStatus.AWAITING_APPROVAL:
+            self._set_scenario_status(ScenarioStatus.AWAITING_APPROVAL)
+        elif incident.status == IncidentStatus.MONITORING:
+            self._set_scenario_status(ScenarioStatus.RECOVERY_PLANNED)
+        return incident
 
     def _diagnose(self, incident_id: str) -> Diagnosis:
         incident = Incident.model_validate(self.store.get("incidents", incident_id))
@@ -764,6 +1132,8 @@ class AgentFleet:
                     excerpt=excerpt,
                     relevance_confidence=min(score + 0.32, 0.96),
                     injection_risk=injection,
+                    provenance=doc.get("provenance"),
+                    trust_classification=doc.get("trust_classification"),
                 )
             )
         result = KnowledgeResult(
@@ -1040,6 +1410,8 @@ class AgentFleet:
                         "revision": ref.revision,
                         "approved": ref.approved,
                         "injection_risk": ref.injection_risk,
+                        "provenance": ref.provenance,
+                        "trust_classification": ref.trust_classification,
                     },
                 )
             )

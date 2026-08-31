@@ -20,6 +20,15 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:12]}"
 
 
+class ForgeModel(BaseModel):
+    seed_schema_version: str | None = None
+    seed_batch_id: str | None = None
+    seeded_at: str | None = None
+    scenario_id: str | None = None
+    synthetic: bool = True
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class MachineState(str, Enum):
     CONNECTED = "CONNECTED"
     DISCONNECTED = "DISCONNECTED"
@@ -109,7 +118,7 @@ class WorkOrderRisk(str, Enum):
     CRITICAL = "CRITICAL"
 
 
-class TelemetrySample(BaseModel):
+class TelemetrySample(ForgeModel):
     timestamp: str = Field(default_factory=utc_now_iso)
     spindle_load_pct: float = 0
     x_axis_load_pct: float = 0
@@ -120,7 +129,7 @@ class TelemetrySample(BaseModel):
     tool_life_remaining_pct: float = 100
 
 
-class Machine(BaseModel):
+class Machine(ForgeModel):
     machine_id: str
     cell: str
     model: str
@@ -137,7 +146,7 @@ class Machine(BaseModel):
     operator: str = "Synthetic Operator"
 
 
-class WorkOrder(BaseModel):
+class WorkOrder(ForgeModel):
     work_order_id: str
     part_number: str
     part_description: str
@@ -151,13 +160,18 @@ class WorkOrder(BaseModel):
     observed_cycle_time_sec: float
     risk: WorkOrderRisk = WorkOrderRisk.LOW
     downstream_orders: list[str] = Field(default_factory=list)
+    status: str = "ACTIVE"
+    priority: str = "P2"
+    scheduled_start: str | None = None
+    scheduled_end: str | None = None
+    operator: str = "Synthetic Operator"
 
     @property
     def remaining_quantity(self) -> int:
         return max(self.required_quantity - self.completed_quantity - self.scrap_quantity, 0)
 
 
-class MachineEvent(BaseModel):
+class MachineEvent(ForgeModel):
     event_id: str = Field(default_factory=lambda: new_id("evt"))
     timestamp: str = Field(default_factory=utc_now_iso)
     event_type: EventType
@@ -170,7 +184,7 @@ class MachineEvent(BaseModel):
     schema_version: str = "1.0"
 
 
-class IncidentEvidence(BaseModel):
+class IncidentEvidence(ForgeModel):
     evidence_id: str = Field(default_factory=lambda: new_id("evd"))
     event_id: str | None = None
     title: str
@@ -186,7 +200,7 @@ class IncidentEvidence(BaseModel):
     created_at: str = Field(default_factory=utc_now_iso)
 
 
-class ObserverFinding(BaseModel):
+class ObserverFinding(ForgeModel):
     incident_required: bool
     severity: Severity
     machine_id: str | None
@@ -195,14 +209,14 @@ class ObserverFinding(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
-class ProbableCause(BaseModel):
+class ProbableCause(ForgeModel):
     cause: str
     confidence: float = Field(ge=0, le=1)
     evidence: list[str] = Field(default_factory=list)
     contradictions: list[str] = Field(default_factory=list)
 
 
-class Diagnosis(BaseModel):
+class Diagnosis(ForgeModel):
     incident_id: str
     probable_causes: list[ProbableCause]
     recommended_checks: list[str]
@@ -211,7 +225,7 @@ class Diagnosis(BaseModel):
     summary: str
 
 
-class KnowledgeReference(BaseModel):
+class KnowledgeReference(ForgeModel):
     document_id: str
     title: str
     document_type: str
@@ -220,16 +234,18 @@ class KnowledgeReference(BaseModel):
     excerpt: str
     relevance_confidence: float = Field(ge=0, le=1)
     injection_risk: bool = False
+    provenance: str | None = None
+    trust_classification: str | None = None
 
 
-class KnowledgeResult(BaseModel):
+class KnowledgeResult(ForgeModel):
     incident_id: str
     references: list[KnowledgeReference]
     security_events: list[str] = Field(default_factory=list)
     summary: str
 
 
-class AlternativeMachine(BaseModel):
+class AlternativeMachine(ForgeModel):
     machine_id: str
     capable: bool
     current_state: MachineState
@@ -239,7 +255,7 @@ class AlternativeMachine(BaseModel):
     risk_notes: list[str] = Field(default_factory=list)
 
 
-class ProductionImpact(BaseModel):
+class ProductionImpact(ForgeModel):
     incident_id: str
     work_order_id: str
     remaining_quantity: int
@@ -250,7 +266,7 @@ class ProductionImpact(BaseModel):
     saved_minutes_if_reassigned: int
 
 
-class ActionProposal(BaseModel):
+class ActionProposal(ForgeModel):
     action_id: str = Field(default_factory=lambda: new_id("act"))
     action_type: str
     title: str
@@ -260,7 +276,7 @@ class ActionProposal(BaseModel):
     risk: str
 
 
-class RecoveryPlan(BaseModel):
+class RecoveryPlan(ForgeModel):
     incident_id: str
     summary: str
     steps: list[str]
@@ -269,7 +285,7 @@ class RecoveryPlan(BaseModel):
     physical_safety_boundary: str
 
 
-class SupervisorDecision(BaseModel):
+class SupervisorDecision(ForgeModel):
     incident_id: str
     effect: PolicyEffect
     approved_auto_actions: list[str] = Field(default_factory=list)
@@ -278,7 +294,7 @@ class SupervisorDecision(BaseModel):
     rationale: str
 
 
-class WorkflowStage(BaseModel):
+class WorkflowStage(ForgeModel):
     stage_id: str
     agent_id: str
     label: str
@@ -291,6 +307,9 @@ class WorkflowStage(BaseModel):
     duration_ms: int | None = None
     retry_count: int = 0
     error: str | None = None
+    provider_status: str | None = None
+    fallback_used: bool = False
+    fallback_reason: str | None = None
     parallel_group: str | None = None
     order: int
 
@@ -351,7 +370,7 @@ def default_workflow_stages() -> list[WorkflowStage]:
     return [WorkflowStage(**definition) for definition in WORKFLOW_STAGE_DEFINITIONS]
 
 
-class Incident(BaseModel):
+class Incident(ForgeModel):
     incident_id: str
     title: str
     severity: Severity
@@ -372,7 +391,7 @@ class Incident(BaseModel):
     learned_at: str | None = None
 
 
-class MaintenanceTicket(BaseModel):
+class MaintenanceTicket(ForgeModel):
     ticket_id: str
     incident_id: str
     machine_id: str
@@ -385,7 +404,7 @@ class MaintenanceTicket(BaseModel):
     created_at: str = Field(default_factory=utc_now_iso)
 
 
-class ScheduleProposal(BaseModel):
+class ScheduleProposal(ForgeModel):
     proposal_id: str
     incident_id: str
     work_order_id: str
@@ -400,7 +419,7 @@ class ScheduleProposal(BaseModel):
     approved_by: str | None = None
 
 
-class Notification(BaseModel):
+class Notification(ForgeModel):
     notification_id: str
     severity: Severity
     title: str
@@ -411,7 +430,7 @@ class Notification(BaseModel):
     acknowledged: bool = False
 
 
-class AgentManifest(BaseModel):
+class AgentManifest(ForgeModel):
     agent_id: str
     name: str
     version: str
@@ -430,7 +449,7 @@ class AgentManifest(BaseModel):
     last_updated: str
 
 
-class AgentRun(BaseModel):
+class AgentRun(ForgeModel):
     run_id: str = Field(default_factory=lambda: new_id("run"))
     agent_id: str
     incident_id: str | None = None
@@ -446,9 +465,13 @@ class AgentRun(BaseModel):
     error: str | None = None
     retry_count: int = 0
     duration_ms: int | None = None
+    provider_status: str | None = None
+    fallback_used: bool = False
+    fallback_reason: str | None = None
+    synthetic_failure: bool = False
 
 
-class PolicyDecision(BaseModel):
+class PolicyDecision(ForgeModel):
     decision_id: str = Field(default_factory=lambda: new_id("pol"))
     timestamp: str = Field(default_factory=utc_now_iso)
     principal: str
@@ -460,7 +483,7 @@ class PolicyDecision(BaseModel):
     incident_id: str | None = None
 
 
-class SecurityEvent(BaseModel):
+class SecurityEvent(ForgeModel):
     security_event_id: str = Field(default_factory=lambda: new_id("sec"))
     timestamp: str = Field(default_factory=utc_now_iso)
     severity: Severity
@@ -480,7 +503,7 @@ class SecurityEvent(BaseModel):
     incident_id: str | None = None
 
 
-class OperationalMemory(BaseModel):
+class OperationalMemory(ForgeModel):
     memory_id: str = Field(default_factory=lambda: new_id("mem"))
     timestamp: str = Field(default_factory=utc_now_iso)
     incident_id: str
@@ -491,7 +514,7 @@ class OperationalMemory(BaseModel):
     source: str
 
 
-class TraceSpan(BaseModel):
+class TraceSpan(ForgeModel):
     span_id: str = Field(default_factory=lambda: new_id("span"))
     trace_id: str
     correlation_id: str
@@ -505,7 +528,7 @@ class TraceSpan(BaseModel):
     attributes: dict[str, Any] = Field(default_factory=dict)
 
 
-class Approval(BaseModel):
+class Approval(ForgeModel):
     approval_id: str = Field(default_factory=lambda: new_id("apv"))
     incident_id: str
     proposal_id: str

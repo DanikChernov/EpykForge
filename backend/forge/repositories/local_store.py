@@ -26,12 +26,22 @@ COLLECTIONS = [
     "memories",
     "approvals",
     "schedule_proposals",
+    "agent_identities",
+    "permission_policies",
+    "parts",
+    "operations",
+    "alarm_definitions",
+    "maintenance_history",
+    "notification_rules",
+    "security_fixtures",
+    "retry_fixtures",
+    "model_invocations",
     "idempotency",
 ]
 
 
 def empty_state() -> dict[str, Any]:
-    state: dict[str, Any] = {}
+    state: dict[str, Any] = {"_meta": {}}
     for collection in COLLECTIONS:
         state[collection] = {} if collection not in {"events", "traces"} else []
     return state
@@ -54,10 +64,14 @@ class LocalStore:
     def reset(self, state: dict[str, Any]) -> None:
         with self._lock:
             serializable = deepcopy(state)
+            serializable.setdefault("_meta", {})
             for collection in COLLECTIONS:
                 serializable.setdefault(collection, {} if collection not in {"events", "traces"} else [])
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps(serializable, indent=2, sort_keys=True), encoding="utf-8")
+            payload = json.dumps(serializable, indent=2, sort_keys=True)
+            temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
+            temp_path.write_text(payload, encoding="utf-8")
+            temp_path.replace(self.path)
 
     def read_state(self) -> dict[str, Any]:
         with self._lock:
@@ -65,7 +79,14 @@ class LocalStore:
 
     def write_state(self, state: dict[str, Any]) -> None:
         with self._lock:
-            self.path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+            serializable = deepcopy(state)
+            serializable.setdefault("_meta", {})
+            for collection in COLLECTIONS:
+                serializable.setdefault(collection, {} if collection not in {"events", "traces"} else [])
+            payload = json.dumps(serializable, indent=2, sort_keys=True)
+            temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
+            temp_path.write_text(payload, encoding="utf-8")
+            temp_path.replace(self.path)
 
     def transaction(self, fn: Callable[[dict[str, Any]], Any]) -> Any:
         with self._lock:

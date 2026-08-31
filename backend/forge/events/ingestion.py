@@ -36,10 +36,10 @@ class EventIngestionService:
             self._apply_event_to_machine(event)
             incident_id: str | None = None
             if event.event_type == EventType.ALARM:
-                finding = self.fleet.observe_event(event)
-                incident = self.fleet.create_incident_from_finding(event, finding)
+                incident = self.fleet.ensure_incident_for_alarm(event)
                 if incident:
                     incident_id = incident.incident_id
+                    self.fleet.observe_event(event)
                     self.fleet.run_incident_pipeline(incident.incident_id)
             return {"status": "accepted", "event_id": event.event_id, "incident_id": incident_id}
 
@@ -66,6 +66,28 @@ class EventIngestionService:
             elif event.event_type == EventType.RUNNING:
                 machine.state = MachineState.RUNNING
             elif event.event_type == EventType.ALARM:
+                telemetry_fields = {
+                    key: event.payload[key]
+                    for key in {
+                        "spindle_load_pct",
+                        "x_axis_load_pct",
+                        "y_axis_load_pct",
+                        "z_axis_load_pct",
+                        "observed_cycle_time_sec",
+                        "target_cycle_time_sec",
+                        "tool_life_remaining_pct",
+                    }
+                    if key in event.payload
+                }
+                if telemetry_fields:
+                    telemetry = TelemetrySample.model_validate(telemetry_fields)
+                    machine.telemetry = telemetry
+                    machine.telemetry_history.append(telemetry)
+                    machine.telemetry_history = machine.telemetry_history[-40:]
+                    if machine.current_work_order_id and machine.current_work_order_id in state["work_orders"]:
+                        wo = WorkOrder.model_validate(state["work_orders"][machine.current_work_order_id])
+                        wo.observed_cycle_time_sec = telemetry.observed_cycle_time_sec or wo.observed_cycle_time_sec
+                        state["work_orders"][wo.work_order_id] = wo.model_dump(mode="json")
                 machine.state = MachineState.ALARM
                 code = event.payload.get("code")
                 if code:

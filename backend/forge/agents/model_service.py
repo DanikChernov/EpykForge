@@ -14,6 +14,26 @@ class ModelServiceError(RuntimeError):
     pass
 
 
+TRANSIENT_MODEL_ERROR_MARKERS = (
+    "429",
+    "RESOURCE_EXHAUSTED",
+    "DEADLINE_EXCEEDED",
+    "TIMEOUT",
+    "TIMED OUT",
+    "503",
+    "502",
+    "500",
+    "504",
+    "UNAVAILABLE",
+    "TEMPORARY",
+)
+
+
+def is_transient_model_error(exc: BaseException) -> bool:
+    text = f"{type(exc).__name__}: {exc}".upper()
+    return any(marker in text for marker in TRANSIENT_MODEL_ERROR_MARKERS)
+
+
 class BaseModelService:
     provider_name = "BASE"
 

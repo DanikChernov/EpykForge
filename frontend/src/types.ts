@@ -111,6 +111,9 @@ export interface AgentManifest {
   health?: string;
   current_task?: string | null;
   last_execution?: string | null;
+  provider_status?: string | null;
+  fallback_used?: boolean;
+  fallback_reason?: string | null;
 }
 
 export interface KnowledgeReference {
@@ -122,6 +125,8 @@ export interface KnowledgeReference {
   excerpt: string;
   relevance_confidence: number;
   injection_risk: boolean;
+  provenance?: string | null;
+  trust_classification?: string | null;
 }
 
 export interface IncidentEvidence {
@@ -153,6 +158,9 @@ export interface WorkflowStage {
   duration_ms?: number | null;
   retry_count: number;
   error?: string | null;
+  provider_status?: string | null;
+  fallback_used?: boolean;
+  fallback_reason?: string | null;
   parallel_group?: string | null;
   order: number;
 }
@@ -308,11 +316,45 @@ export interface SystemInfo {
   cloud_claim_active: boolean;
 }
 
+export interface DemoControlState {
+  enabled: boolean;
+  reason: string;
+}
+
 export interface DemoSeedStatus {
   demo_data_enabled: boolean;
   seed_profile: string;
+  seed_schema_version?: string | null;
+  seed_batch_id?: string | null;
+  seeded_at?: string | null;
+  scenario_id?: string | null;
   scenario_status: string;
+  scenario_message?: string;
+  run_id?: string | null;
+  provider_fallbacks?: Array<{
+    agent_id: string;
+    provider: string;
+    reason: string;
+    trace_id?: string | null;
+    timestamp: string;
+  }>;
   collections: Record<string, number>;
+  controls?: Record<string, DemoControlState>;
+}
+
+export interface SnapshotResponse {
+  facility: Facility;
+  machines: Machine[];
+  workOrders: WorkOrder[];
+  incidents: Incident[];
+  activeIncident?: Incident | null;
+  agents: AgentManifest[];
+  registry: AgentManifest[];
+  security: SecurityEvent[];
+  traces: TraceSpan[];
+  approvals: Approval[];
+  system: SystemInfo;
+  demoSeed: DemoSeedStatus;
 }
 
 export interface AdminSetupStatus {

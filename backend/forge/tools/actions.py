@@ -21,7 +21,7 @@ from forge.domain.models import (
     new_id,
     utc_now_iso,
 )
-from forge.domain.state_machine import ScenarioStatus, transition_incident
+from forge.domain.state_machine import SCENARIO_MESSAGES, ScenarioStatus, transition_incident
 from forge.policies.permissions import PolicyService
 from forge.repositories.local_store import LocalStore
 
@@ -390,7 +390,8 @@ class ToolExecutor:
             state["incidents"][incident.incident_id] = incident.model_dump(mode="json")
             scenario = state.get("scenario_state", {}).get("default")
             if scenario and scenario.get("status") == ScenarioStatus.AWAITING_APPROVAL.value:
-                scenario["status"] = ScenarioStatus.MONITORING.value
+                scenario["status"] = ScenarioStatus.RECOVERY_PLANNED.value
+                scenario["message"] = SCENARIO_MESSAGES[ScenarioStatus.RECOVERY_PLANNED]
                 scenario["updated_at"] = utc_now_iso()
             return proposal.model_dump(mode="json")
 
@@ -443,7 +444,8 @@ class ToolExecutor:
             state["incidents"][incident.incident_id] = incident.model_dump(mode="json")
             scenario = state.get("scenario_state", {}).get("default")
             if scenario and scenario.get("status") == ScenarioStatus.AWAITING_APPROVAL.value:
-                scenario["status"] = ScenarioStatus.ESCALATED.value
+                scenario["status"] = ScenarioStatus.DEGRADED.value
+                scenario["message"] = "Schedule transfer was rejected; reset or import the seed to return to READY."
                 scenario["updated_at"] = utc_now_iso()
             return approval.model_dump(mode="json")
 
@@ -552,7 +554,7 @@ class ToolExecutor:
         self,
         *,
         principal: str,
-        incident_id: str,
+        incident_id: str | None,
         target: str,
         trace_id: str,
     ) -> None:

@@ -18,13 +18,15 @@ from forge.domain.models import (
     MachineEvent,
     WorkOrder,
 )
-from forge.domain.state_machine import IllegalScenarioTransition, ScenarioStatus
+from forge.domain.state_machine import IllegalScenarioTransition, is_active_incident
 from forge.events.bus import EventBus, InProcessEventBus
 from forge.events.ingestion import EventIngestionService
 from forge.policies.permissions import PolicyService
 from forge.repositories.local_store import LocalStore
 from forge.simulator.runner import HERO_CORRELATION_ID, DemoScenarioRunner
+from forge.simulator.seed import SEED_BATCH_ID
 from forge.simulator.seed_service import DemoDataDisabled, SeedService
+from forge.simulator.seed_validator import SeedValidationError
 from forge.telemetry.logging import configure_logging
 from forge.telemetry.tracing import TraceRecorder
 from forge.tools.actions import ToolExecutor
@@ -78,7 +80,17 @@ def build_services(settings: Settings) -> ServiceBundle:
     tools = ToolExecutor(store, policy)
     traces = TraceRecorder(store)
     seed = SeedService(store=store, model=settings.gemini_model)
-    if not store.get("scenario_state", "default"):
+    seed_status = seed.status()
+    if (
+        settings.demo_data_enabled
+        and (
+            not store.get("scenario_state", "default")
+            or seed_status["collections"]["machines"] != 10
+            or seed_status.get("seed_batch_id") != SEED_BATCH_ID
+        )
+    ):
+        seed.import_complete_seed()
+    elif not store.get("scenario_state", "default"):
         if settings.demo_data_enabled:
             seed.import_complete_seed()
         else:
@@ -150,6 +162,84 @@ def _module_available(module_name: str) -> bool:
     return importlib.util.find_spec(module_name) is not None
 
 
+def _active_incident_rows(state: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in state.get("incidents", {}).values()
+        if is_active_incident(str(row.get("status")))
+    ]
+
+
+def _facility_from_state(state: dict[str, Any]) -> dict[str, Any]:
+    machines = [Machine.model_validate(raw) for raw in state.get("machines", {}).values()]
+    work_orders = [WorkOrder.model_validate(raw) for raw in state.get("work_orders", {}).values()]
+    active_incidents = _active_incident_rows(state)
+    return {
+        "facility_name": "Northstar Precision Works",
+        "synthetic": True,
+        "health_score": int(sum(machine.health_score for machine in machines) / max(len(machines), 1)),
+        "machines_total": len(machines),
+        "machines_running": sum(1 for machine in machines if machine.state.value == "RUNNING"),
+        "machines_idle": sum(1 for machine in machines if machine.state.value == "IDLE"),
+        "machines_alarmed": sum(1 for machine in machines if machine.state.value == "ALARM"),
+        "machines_maintenance": sum(1 for machine in machines if machine.state.value == "MAINTENANCE"),
+        "active_incidents": len(active_incidents),
+        "at_risk_orders": sum(1 for wo in work_orders if wo.risk.value in {"HIGH", "CRITICAL"}),
+        "agent_fleet_status": "ACTIVE",
+        "model_provider": services.fleet.model_service.provider_name,
+    }
+
+
+def _agents_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
+    runs = list(state.get("agent_runs", {}).values())
+    result = []
+    for manifest in state.get("agent_registry", {}).values():
+        agent_runs = sorted(
+            [run for run in runs if run.get("agent_id") == manifest.get("agent_id")],
+            key=lambda row: (row.get("started_at", ""), row.get("completed_at", ""), row.get("run_id", "")),
+        )
+        latest = agent_runs[-1] if agent_runs else None
+        result.append(
+            manifest
+            | {
+                "current_task": latest.get("incident_id") if latest else None,
+                "last_execution": latest.get("completed_at") if latest else None,
+                "latest_status": latest.get("status") if latest else "IDLE",
+                "successful_executions": sum(1 for run in agent_runs if run.get("status") in {"SUCCEEDED", "RECOVERED"}),
+                "failures": sum(1 for run in agent_runs if run.get("status") == "FAILED"),
+                "latency_ms": latest.get("duration_ms") if latest else None,
+                "health": "DEGRADED" if latest and latest.get("status") == "FAILED" else "HEALTHY",
+                "provider_status": latest.get("provider_status") if latest else services.fleet.model_service.provider_name,
+                "fallback_used": bool(latest.get("fallback_used")) if latest else False,
+                "fallback_reason": latest.get("fallback_reason") if latest else None,
+            }
+        )
+    return result
+
+
+def _incident_detail_from_state(state: dict[str, Any], incident_id: str) -> dict[str, Any] | None:
+    raw = state.get("incidents", {}).get(incident_id)
+    if not raw:
+        return None
+    approvals = [row for row in state.get("approvals", {}).values() if row.get("incident_id") == incident_id]
+    actions = [row for row in state.get("action_executions", {}).values() if row.get("incident_id") == incident_id]
+    runs = sorted(
+        [row for row in state.get("agent_runs", {}).values() if row.get("incident_id") == incident_id],
+        key=lambda row: (row.get("started_at", ""), row.get("completed_at", ""), row.get("run_id", "")),
+    )
+    traces = [row for row in state.get("traces", []) if row.get("correlation_id") == raw.get("correlation_id")]
+    proposals = [
+        row for row in state.get("schedule_proposals", {}).values() if row.get("incident_id") == incident_id
+    ]
+    return raw | {
+        "approvals": approvals,
+        "action_log": sorted(actions, key=lambda row: row.get("timestamp", "")),
+        "agent_runs": runs,
+        "trace_spans": traces,
+        "schedule_proposals": proposals,
+    }
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -195,6 +285,35 @@ def system_info() -> dict[str, Any]:
         "state_store": "Google Firestore" if services.settings.store_backend == "firestore" else "local JSON store",
         "managed_agent_platform": managed_flags,
         "cloud_claim_active": cloud,
+    }
+
+
+@app.get("/api/snapshot")
+def snapshot() -> dict[str, Any]:
+    state = _state()
+    incidents = list(state.get("incidents", {}).values())
+    active_rows = _active_incident_rows(state)
+    latest_incident_id = (
+        active_rows[0].get("incident_id")
+        if active_rows
+        else (incidents[-1].get("incident_id") if incidents else None)
+    )
+    active_incident = (
+        _incident_detail_from_state(state, str(latest_incident_id)) if latest_incident_id else None
+    )
+    return {
+        "facility": _facility_from_state(state),
+        "machines": list(state.get("machines", {}).values()),
+        "workOrders": list(state.get("work_orders", {}).values()),
+        "incidents": incidents,
+        "activeIncident": active_incident,
+        "agents": _agents_from_state(state),
+        "registry": list(state.get("agent_registry", {}).values()),
+        "security": list(state.get("security_events", {}).values()),
+        "traces": state.get("traces", []),
+        "approvals": list(state.get("approvals", {}).values()),
+        "system": system_info(),
+        "demoSeed": services.seed.status_from_state(state),
     }
 
 
@@ -254,7 +373,10 @@ def admin_seed_preview(x_admin_pin: str | None = Header(default=None)) -> dict[s
 @app.post("/api/admin/seed/import")
 def admin_seed_import(x_admin_pin: str | None = Header(default=None)) -> dict[str, Any]:
     _require_admin_pin(x_admin_pin)
-    return services.seed.import_complete_seed() | {"status": "imported"}
+    try:
+        return services.seed.import_complete_seed() | {"status": "imported"}
+    except SeedValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors) from exc
 
 
 @app.post("/api/admin/seed/enable")
@@ -303,24 +425,7 @@ def admin_gemini_smoke(x_admin_pin: str | None = Header(default=None)) -> dict[s
 
 @app.get("/api/facility")
 def facility() -> dict[str, Any]:
-    machines = [Machine.model_validate(raw) for raw in services.store.list("machines")]
-    work_orders = [WorkOrder.model_validate(raw) for raw in services.store.list("work_orders")]
-    incidents = [Incident.model_validate(raw) for raw in services.store.list("incidents")]
-    active_incidents = [item for item in incidents if item.status.value not in {"LEARNED", "CANCELLED"}]
-    return {
-        "facility_name": "Northstar Precision Works",
-        "synthetic": True,
-        "health_score": int(sum(machine.health_score for machine in machines) / max(len(machines), 1)),
-        "machines_total": len(machines),
-        "machines_running": sum(1 for machine in machines if machine.state.value == "RUNNING"),
-        "machines_idle": sum(1 for machine in machines if machine.state.value == "IDLE"),
-        "machines_alarmed": sum(1 for machine in machines if machine.state.value == "ALARM"),
-        "machines_maintenance": sum(1 for machine in machines if machine.state.value == "MAINTENANCE"),
-        "active_incidents": len(active_incidents),
-        "at_risk_orders": sum(1 for wo in work_orders if wo.risk.value in {"HIGH", "CRITICAL"}),
-        "agent_fleet_status": "ACTIVE",
-        "model_provider": services.fleet.model_service.provider_name,
-    }
+    return _facility_from_state(_state())
 
 
 @app.get("/api/machines")
@@ -358,51 +463,15 @@ def incidents() -> list[dict[str, Any]]:
 
 @app.get("/api/incidents/{incident_id}")
 def incident(incident_id: str) -> dict[str, Any]:
-    raw = services.store.get("incidents", incident_id)
-    if not raw:
+    detail = _incident_detail_from_state(_state(), incident_id)
+    if not detail:
         raise HTTPException(status_code=404, detail="Incident not found")
-    approvals = [row for row in services.store.list("approvals") if row.get("incident_id") == incident_id]
-    actions = [row for row in services.store.list("action_executions") if row.get("incident_id") == incident_id]
-    runs = sorted(
-        [row for row in services.store.list("agent_runs") if row.get("incident_id") == incident_id],
-        key=lambda row: (row.get("started_at", ""), row.get("completed_at", ""), row.get("run_id", "")),
-    )
-    traces = [row for row in services.store.list("traces") if row.get("correlation_id") == raw.get("correlation_id")]
-    proposals = [
-        row for row in services.store.list("schedule_proposals") if row.get("incident_id") == incident_id
-    ]
-    return raw | {
-        "approvals": approvals,
-        "action_log": sorted(actions, key=lambda row: row.get("timestamp", "")),
-        "agent_runs": runs,
-        "trace_spans": traces,
-        "schedule_proposals": proposals,
-    }
+    return detail
 
 
 @app.get("/api/agents")
 def agents() -> list[dict[str, Any]]:
-    runs = services.store.list("agent_runs")
-    result = []
-    for manifest in services.store.list("agent_registry"):
-        agent_runs = sorted(
-            [run for run in runs if run.get("agent_id") == manifest.get("agent_id")],
-            key=lambda row: (row.get("started_at", ""), row.get("completed_at", ""), row.get("run_id", "")),
-        )
-        latest = agent_runs[-1] if agent_runs else None
-        result.append(
-            manifest
-            | {
-                "current_task": latest.get("incident_id") if latest else None,
-                "last_execution": latest.get("completed_at") if latest else None,
-                "latest_status": latest.get("status") if latest else "IDLE",
-                "successful_executions": sum(1 for run in agent_runs if run.get("status") in {"SUCCEEDED", "RECOVERED"}),
-                "failures": sum(1 for run in agent_runs if run.get("status") == "FAILED"),
-                "latency_ms": latest.get("duration_ms") if latest else None,
-                "health": "DEGRADED" if latest and latest.get("status") == "FAILED" else "HEALTHY",
-            }
-        )
-    return result
+    return _agents_from_state(_state())
 
 
 @app.get("/api/registry")
@@ -445,7 +514,10 @@ def post_event(event: MachineEvent) -> dict[str, Any]:
 
 @app.post("/api/demo/reset")
 def reset_demo() -> dict[str, Any]:
-    return services.seed.import_complete_seed() | {"status": "reset", "incident_id": None}
+    try:
+        return services.seed.import_complete_seed() | {"status": "reset", "incident_id": None}
+    except SeedValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors) from exc
 
 
 @app.get("/api/demo/seed/status")
@@ -455,7 +527,10 @@ def demo_seed_status() -> dict[str, Any]:
 
 @app.post("/api/demo/seed/import")
 def import_demo_seed() -> dict[str, Any]:
-    return services.seed.import_complete_seed() | {"status": "imported"}
+    try:
+        return services.seed.import_complete_seed() | {"status": "imported"}
+    except SeedValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors) from exc
 
 
 @app.post("/api/demo/seed/enable")
@@ -474,21 +549,14 @@ def start_demo(payload: StartDemoRequest, background_tasks: BackgroundTasks) -> 
     try:
         if payload.sync:
             return services.runner.run_hero(speed=speed, sleep=False)
-        services.seed.require_enabled()
-        scenario = services.store.get("scenario_state", "default") or {}
-        if scenario.get("status") != ScenarioStatus.READY.value:
-            raise IllegalScenarioTransition(
-                f"Start Scenario requires {ScenarioStatus.READY.value}; current state is {scenario.get('status')}"
-            )
-        active = [
-            incident
-            for incident in services.store.list("incidents")
-            if incident.get("status") not in {"LEARNED", "FAILED", "ESCALATED", "CANCELLED"}
-        ]
-        if active:
-            raise ValueError("Reset the demo before starting another hero scenario")
-        background_tasks.add_task(services.runner.run_hero, speed=speed, sleep=True)
-        return {"status": "started", "correlation_id": HERO_CORRELATION_ID}
+        prepared = services.runner.prepare_hero_start()
+        background_tasks.add_task(
+            services.runner.run_hero,
+            speed=speed,
+            sleep=True,
+            already_started=True,
+        )
+        return prepared
     except DemoDataDisabled as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (IllegalScenarioTransition, ValueError) as exc:
